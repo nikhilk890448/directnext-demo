@@ -40,6 +40,7 @@ const STEPS = ["Welcome", "About you", "Account", "Coverage & Cost", "Consent", 
 
 const EMPTY = {
   condition: "",
+  narrative: "",
   firstName: "", lastName: "", dob: "", email: "", phone: "",
   addressLine: "", city: "", state: "", zip: "",
   password: "", confirmPassword: "",
@@ -109,6 +110,7 @@ function RegisterFlow({ goLogin }) {
         email: form.email, phone: form.phone, password: form.password,
         address: { line: form.addressLine, city: form.city, state: form.state, zip: form.zip },
         condition: form.condition,
+        narrative: form.narrative || null,
         billingMethod: form.billingMethod,
         costEstimate: { insuranceMonthly: pricing.insuranceCopay, directMonthly: pricing.listPrice },
         insurance: form.billingMethod === "insurance" ? {
@@ -185,6 +187,14 @@ function Welcome({ form, update }) {
           <button key={c} className={"chip" + (form.condition === c ? " chipactive" : "")} onClick={() => update("condition", c)}>{c}</button>
         ))}
       </div>
+      <h3 className="subhead">In your own words (optional)</h3>
+      <textarea
+        className="narrativebox"
+        placeholder="Tell us a bit about what's going on — this helps your care team, and there's no wrong way to say it."
+        value={form.narrative}
+        onChange={(e) => update("narrative", e.target.value)}
+        maxLength={1000}
+      />
     </div>
   );
 }
@@ -484,6 +494,8 @@ function Style() {
       .field{display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--sub);font-weight:600;}
       .field.wide{grid-column:1/-1;}
       .field input, .field select{border:1.5px solid var(--line);border-radius:10px;padding:11px 12px;font-size:14px;font-family:var(--fb);color:var(--ink);outline:none;background:#fff;}
+      .narrativebox{width:100%;min-height:90px;border:1.5px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px;font-family:var(--fb);color:var(--ink);outline:none;resize:vertical;}
+      .narrativebox:focus{border-color:var(--brand);}
       .field input:focus, .field select:focus{border-color:var(--brand);}
       .togglerow{display:flex;gap:8px;}
       .toggle{flex:1;padding:13px;border-radius:12px;border:1.5px solid var(--line);background:#fff;font-size:13.5px;font-weight:600;color:var(--sub);cursor:pointer;}

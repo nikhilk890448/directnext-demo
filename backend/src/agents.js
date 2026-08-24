@@ -21,7 +21,7 @@ export function checkIntakeCompleteness(patient) {
 }
 
 /** Governance — GOV plane, fail-closed. Basic policy hard-stops before any clinician handoff. */
-export function guardrailCheck(patient) {
+export async function guardrailCheck(patient) {
   if (!patient.condition) return { pass: false, reason: "No condition on file" };
   if (!patient.consent?.care_coordination) return { pass: false, reason: "Care-coordination consent not captured" };
   if (patient.billing_method === "insurance") {
@@ -30,7 +30,79 @@ export function guardrailCheck(patient) {
     const missing = required.filter((f) => !ins?.[f]);
     if (!ins || missing.length) return { pass: false, reason: `Opted into insurance billing but missing: ${missing.join(", ") || "insurance details"}` };
   }
-  return { pass: true, reason: null };
+
+  // Rules pass. The NLP layer below can only tighten this result — it can
+  // raise a hold or an advisory flag, never turn a rules failure into a
+  // pass, and never blocks intake if it's unavailable (fails open to the
+  // rules-only result above).
+  const nlp = await checkNarrativeGuardrail(patient);
+  if (nlp.drugPreSelected) {
+    return { pass: false, reason: "Narrative names a specific drug before the visit — policy requires the clinician to determine treatment" };
+  }
+  return { pass: true, reason: null, advisoryFlag: nlp.contraindicationMention || null };
+}
+
+const GEMINI_MODEL = "gemini-2.5-flash";
+
+async function callGeminiJSON(prompt) {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0 },
+        }),
+      }
+    );
+    if (!res.ok) {
+      console.log("[a03-llm] Gemini call failed, status:", res.status);
+      return null;
+    }
+    const data = await res.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) return null;
+    return JSON.parse(text);
+  } catch (e) {
+    console.log("[a03-llm] Gemini call errored:", e.message);
+    return null;
+  }
+}
+
+/**
+ * A03's NLP layer (advisory, on top of the rule floor above). Reads the
+ * patient's own intake narrative for two things a structured-field rules
+ * engine can't check: the patient explicitly naming a drug before the
+ * visit (a policy violation — treatment choice belongs to the clinician),
+ * and any contraindication-adjacent mention, surfaced as a flag for a
+ * human to see, never used to block on its own. If Gemini isn't configured
+ * or the call fails, this returns a neutral no-op result — guardrailCheck
+ * then falls back to the rules-only outcome, exactly as if this layer
+ * didn't run at all.
+ */
+async function checkNarrativeGuardrail(patient) {
+  const narrative = (patient.narrative || "").trim();
+  if (!narrative) return { drugPreSelected: false, contraindicationMention: null };
+
+  const prompt = `You are a policy compliance checker for a patient intake narrative. You do NOT diagnose or judge clinical appropriateness — only detect two things.
+
+Patient's own words: "${narrative.slice(0, 1000)}"
+
+Return ONLY a JSON object with this exact shape:
+{"drugPreSelected": boolean, "contraindicationMention": string or null}
+
+drugPreSelected = true ONLY if the patient explicitly names a specific brand or drug they want prescribed (e.g. "I want Ozempic"). Mentioning a condition or symptom is NOT pre-selection.
+contraindicationMention = a short (under 15 words) neutral description of anything mentioned that a clinician should know about (e.g. "mentions pregnancy", "mentions currently taking blood thinners"), or null if nothing notable.`;
+
+  const result = await callGeminiJSON(prompt);
+  if (!result || typeof result.drugPreSelected !== "boolean") {
+    return { drugPreSelected: false, contraindicationMention: null };
+  }
+  return result;
 }
 
 /** ORCH. Predicts likelihood the payer denies prior authorization. */
@@ -81,5 +153,5 @@ export async function runAgent(agentId, input) {
 
   const fn = AGENT_FNS[agentId];
   if (!fn) return { ok: false, error: "no implementation" };
-  return { ok: true, result: fn(input) };
+  return { ok: true, result: await fn(input) };
 }

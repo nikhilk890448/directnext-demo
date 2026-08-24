@@ -46,6 +46,7 @@ intakeRouter.post("/", async (req, res) => {
     insurance,
     billing_method: billingMethod,
     cost_estimate: body.costEstimate || null,
+    narrative: body.narrative || null,
     consent: { care_coordination: !!body.consentCareCoordination },
     patient_ref: genPatientRef(),
   };
@@ -122,6 +123,20 @@ intakeRouter.post("/", async (req, res) => {
     });
     await appendAudit({ journeyId: journey.id, actor: "agent:guardrail", decision: "guardrail hold created at intake", fieldsShared: "—" });
     return res.status(201).json({ ok: true, patientRef: patient.patient_ref, journeyId: journey.id, stage: "intake", held: true });
+  }
+
+  // Guardrail passed but its NLP layer noticed something worth a human
+  // seeing — per the "flag, never a block" design, this never holds the
+  // journey, it just surfaces as a low-priority task.
+  if (guardrail.result?.advisoryFlag) {
+    await supabase.from("tasks").insert({
+      journey_id: journey.id,
+      type: "Guardrail advisory",
+      reason: guardrail.result.advisoryFlag,
+      priority: "low",
+      assigned_role: "Governance",
+    });
+    await appendAudit({ journeyId: journey.id, actor: "agent:guardrail-nlp", decision: "advisory flag surfaced (not a hold)", fieldsShared: "flag text only" });
   }
 
   // Guardrail cleared — advance to Telehealth. Insurance prior auth no
