@@ -1,4 +1,3 @@
-import { supabase } from "./db.js";
 import { authClient } from "./authClient.js";
 
 /**
@@ -22,17 +21,29 @@ export async function requirePatientAuth(req, res, next) {
   }
   console.log("[patient-auth] token resolved to auth user id:", userData.user.id, userData.user.email);
 
-  const { data: patient, error: pErr } = await supabase
-    .from("patients")
-    .select("*")
-    .eq("auth_user_id", userData.user.id)
-    .maybeSingle();
-  if (pErr) {
-    console.log("[patient-auth] patients query error:", pErr.message);
+  // Bypassing the supabase-js query builder here and hitting PostgREST
+  // directly with fetch(). The .from() builder was reliably returning zero
+  // rows for this project/key combination even on a dedicated client that
+  // never touches auth state — while the identical request over plain HTTP
+  // (proven via curl during debugging) works every time. This sidesteps
+  // whatever that SDK-level issue is rather than continuing to chase it.
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const restUrl = `${process.env.SUPABASE_URL}/rest/v1/patients?auth_user_id=eq.${encodeURIComponent(userData.user.id)}&select=*`;
+  let rows;
+  try {
+    const restRes = await fetch(restUrl, {
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+    });
+    rows = await restRes.json();
+    console.log("[patient-auth] direct REST lookup status:", restRes.status, "rows:", Array.isArray(rows) ? rows.length : "n/a");
+  } catch (e) {
+    console.log("[patient-auth] direct REST lookup threw:", e.message);
     return res.status(401).json({ ok: false, error: "no_patient_for_account" });
   }
+
+  const patient = Array.isArray(rows) ? rows[0] : null;
   if (!patient) {
-    console.log("[patient-auth] no patient row matched auth_user_id:", userData.user.id);
+    console.log("[patient-auth] no patient row matched auth_user_id:", userData.user.id, "raw response:", JSON.stringify(rows).slice(0, 300));
     return res.status(401).json({ ok: false, error: "no_patient_for_account" });
   }
 
