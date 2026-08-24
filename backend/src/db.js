@@ -11,6 +11,15 @@ if (!url || !key) {
   );
 }
 
+// Diagnostic only — never logs the actual key. Prints its length and the
+// last 6 characters so a stray trailing newline/space (common when pasting
+// into an env var field) shows up as an unexpected length or tail.
+console.log(
+  "[db] SUPABASE_URL:", JSON.stringify(url),
+  "| service key length:", key ? key.length : 0,
+  "| key tail:", key ? JSON.stringify(key.slice(-6)) : "(none)"
+);
+
 // IMPORTANT: this is the service_role key. It bypasses Row Level Security and
 // can read PHI. It must only ever live here, on the backend, as a server
 // environment variable — never in the storefront or dashboard frontend code,
