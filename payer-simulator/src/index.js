@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { supabase } from "./db.js";
+import { restGet, restInsert, restUpdate } from "./rest.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -65,26 +65,27 @@ app.post("/eligibility/inquiry", async (req, res) => {
   const missing = findMissing(payload);
 
   if (missing.length > 0) {
-    await supabase.from("eligibility_requests").insert({
+    const ins = await restInsert("eligibility_requests", {
       journey_id: payload.requestId, request: payload, missing_fields: missing, status: "needs_info",
     });
+    console.log("[eligibility] insert (needs_info) status:", ins.status);
     return res.json({ status: "needs_info", missingFields: missing });
   }
 
   const { outcome, decision } = adjudicate(payload);
-  const dbStatus = outcome; // "pending_review" | "auto_denied" | "auto_approved"
 
-  await supabase.from("eligibility_requests").insert({
-    journey_id: payload.requestId, request: payload, missing_fields: [], status: dbStatus, decision: decision || null,
+  const ins = await restInsert("eligibility_requests", {
+    journey_id: payload.requestId, request: payload, missing_fields: [], status: outcome, decision: decision || null,
   });
+  console.log("[eligibility] insert status:", ins.status, "outcome:", outcome);
 
   res.json({ status: outcome, decision: decision || null });
 });
 
 // GET /api/requests — for the dashboard.
 app.get("/api/requests", async (_req, res) => {
-  const { data, error } = await supabase.from("eligibility_requests").select("*").order("created_at", { ascending: false }).limit(100);
-  if (error) return res.status(500).json({ ok: false, error: error.message });
+  const { status, data } = await restGet("eligibility_requests?order=created_at.desc&limit=100&select=*");
+  if (status >= 400 || !Array.isArray(data)) return res.status(500).json({ ok: false, error: "lookup_failed" });
   res.json({ ok: true, requests: data });
 });
 
@@ -94,16 +95,17 @@ app.post("/api/requests/:id/decide", async (req, res) => {
   const { id } = req.params;
   const { decision: outcome, notes } = req.body || {}; // "approved" | "denied"
 
-  const { data: row } = await supabase.from("eligibility_requests").select("*").eq("id", id).maybeSingle();
+  const { data: rows } = await restGet(`eligibility_requests?id=eq.${id}&select=*`);
+  const row = Array.isArray(rows) ? rows[0] : null;
   if (!row) return res.status(404).json({ ok: false, error: "not found" });
 
   const decisionPayload = outcome === "approved"
     ? { planName: "Reviewed — Standard Plan", copay: 35, coinsurance: 10, deductibleRemaining: 400, priorAuthRequired: false }
     : { reason: notes || "Denied on manual review" };
 
-  await supabase.from("eligibility_requests").update({
+  await restUpdate("eligibility_requests", `id=eq.${id}`, {
     status: outcome, decision: decisionPayload, reviewed_by: "demo-reviewer", updated_at: new Date().toISOString(),
-  }).eq("id", id);
+  });
 
   try {
     await fetch(`${process.env.BACKEND_URL}/api/journeys/${row.journey_id}/eligibility-decision`, {
