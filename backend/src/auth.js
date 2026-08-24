@@ -30,20 +30,34 @@ export async function requirePatientAuth(req, res, next) {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const restUrl = `${process.env.SUPABASE_URL}/rest/v1/patients?auth_user_id=eq.${encodeURIComponent(userData.user.id)}&select=*`;
   let rows;
+  
   try {
     const restRes = await fetch(restUrl, {
-      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+      method: "GET",
+      headers: { 
+        // Identifies the routing gateway context
+        "apikey": serviceKey, 
+        // Bypasses Row-Level Security (RLS) policies completely
+        "Authorization": `Bearer ${serviceKey}`, 
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
     });
-    rows = await restRes.json();
-    console.log("[patient-auth] direct REST lookup status:", restRes.status, "rows:", Array.isArray(rows) ? rows.length : "n/a");
+
+    // Read as text first to log potential error messages or empty strings
+    const rawText = await restRes.text();
+    console.log("[patient-auth] direct REST lookup status:", restRes.status, "raw payload:", rawText);
+    
+    rows = JSON.parse(rawText);
   } catch (e) {
     console.log("[patient-auth] direct REST lookup threw:", e.message);
     return res.status(401).json({ ok: false, error: "no_patient_for_account" });
   }
 
+  // Handle case where PostgREST returns a single error object instead of an array
   const patient = Array.isArray(rows) ? rows[0] : null;
   if (!patient) {
-    console.log("[patient-auth] no patient row matched auth_user_id:", userData.user.id, "raw response:", JSON.stringify(rows).slice(0, 300));
+    console.log("[patient-auth] no patient row matched auth_user_id:", userData.user.id, "raw response:", JSON.stringify(rows));
     return res.status(401).json({ ok: false, error: "no_patient_for_account" });
   }
 
