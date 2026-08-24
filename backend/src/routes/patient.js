@@ -1,6 +1,7 @@
 import { Router } from "express";
-import { supabase } from "../db.js";
+import { authClient } from "../authClient.js";
 import { requirePatientAuth } from "../auth.js";
+import { restGet } from "../rest.js";
 import { STAGES } from "../workflow.js";
 
 export const patientRouter = Router();
@@ -9,7 +10,7 @@ patientRouter.post("/login", async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ ok: false, error: "missing_credentials" });
 
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { data, error } = await authClient.auth.signInWithPassword({ email, password });
   if (error) return res.status(401).json({ ok: false, error: "invalid_credentials" });
 
   res.json({ ok: true, accessToken: data.session.access_token });
@@ -18,26 +19,21 @@ patientRouter.post("/login", async (req, res) => {
 // GET /api/patient/me — this is the ONE place the full, real patient record
 // (their own name, stage, tasks) is returned. It only works with a valid
 // token belonging to that exact patient, verified in requirePatientAuth.
+// Uses restGet (raw PostgREST calls) rather than supabase.from() — see the
+// comment in auth.js for why: the SDK query builder was unreliable for
+// this project, plain HTTP calls to the same endpoint work every time.
 patientRouter.get("/me", requirePatientAuth, async (req, res) => {
   const patient = req.patient;
 
-  const { data: journey } = await supabase
-    .from("journeys")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const journeyPath = `journeys?patient_id=eq.${patient.id}&order=created_at.desc&limit=1&select=*`;
+  const { data: journeys } = await restGet(journeyPath);
+  const journey = Array.isArray(journeys) && journeys.length ? journeys[0] : null;
 
   let tasks = [];
   if (journey) {
-    const { data } = await supabase
-      .from("tasks")
-      .select("*")
-      .eq("journey_id", journey.id)
-      .eq("status", "open")
-      .order("created_at", { ascending: false });
-    tasks = data || [];
+    const tasksPath = `tasks?journey_id=eq.${journey.id}&status=eq.open&order=created_at.desc&select=*`;
+    const { data } = await restGet(tasksPath);
+    tasks = Array.isArray(data) ? data : [];
   }
 
   res.json({
