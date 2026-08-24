@@ -1,4 +1,5 @@
 import { supabase } from "./db.js";
+import { authClient } from "./authClient.js";
 
 /**
  * Verifies the Bearer token from a logged-in patient and attaches the
@@ -14,7 +15,7 @@ export async function requirePatientAuth(req, res, next) {
     return res.status(401).json({ ok: false, error: "missing_token" });
   }
 
-  const { data: userData, error: userErr } = await supabase.auth.getUser(token);
+  const { data: userData, error: userErr } = await authClient.auth.getUser(token);
   if (userErr || !userData?.user) {
     console.log("[patient-auth] getUser failed:", userErr?.message || "no user returned");
     return res.status(401).json({ ok: false, error: "invalid_token" });
