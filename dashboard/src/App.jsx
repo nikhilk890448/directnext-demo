@@ -141,10 +141,13 @@ export default function App() {
                         </span>
                       </td>
                       <td>
-                        {j.status === "in_progress" && (
+                        {j.status === "in_progress" && j.current_stage !== "insurance_pa" && (
                           <button className="minibtn" onClick={(e) => { e.stopPropagation(); handleSimulate(j.journey_id); }}>
                             Simulate next ▸
                           </button>
+                        )}
+                        {j.status === "in_progress" && j.current_stage === "insurance_pa" && (
+                          <span className="dim" style={{ fontSize: 11 }}>Awaiting payer</span>
                         )}
                       </td>
                     </tr>
@@ -181,8 +184,11 @@ function JourneyDetail({ detail, onResolve, onSimulate }) {
       <p className="small">Current stage: <strong>{STAGE_LABELS[j.current_stage] || j.current_stage}</strong></p>
       <p className="small">SLA due: <span className="mono">{j.sla_due_at ? new Date(j.sla_due_at).toLocaleString() : "—"}</span></p>
 
-      {j.status === "in_progress" && (
+      {j.status === "in_progress" && j.current_stage !== "insurance_pa" && (
         <button className="btn primary" onClick={() => onSimulate(j.journey_id)}>Simulate partner response ▸</button>
+      )}
+      {j.status === "in_progress" && j.current_stage === "insurance_pa" && (
+        <p className="small" style={{ color: "var(--cyan)" }}>Waiting on the payer — decisions for this stage happen in the payer console, not here.</p>
       )}
 
       <h4 className="sectionhead">Stage history</h4>
