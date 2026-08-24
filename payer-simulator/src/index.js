@@ -24,6 +24,10 @@ const REQUIRED = [
   ["subscriber.lastName", (p) => p.subscriber?.lastName],
   ["subscriber.dob", (p) => p.subscriber?.dob],
   ["serviceTypeCode", (p) => p.serviceTypeCode],
+  // A real prior-auth review needs clinical justification, not just
+  // coverage matching — these two are what a reviewer actually reads.
+  ["clinical.diagnosisCode", (p) => p.clinical?.diagnosisCode],
+  ["clinical.medicalNecessity", (p) => p.clinical?.medicalNecessity],
 ];
 
 function findMissing(payload) {

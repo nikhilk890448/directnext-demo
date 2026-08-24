@@ -4,8 +4,8 @@ import { api } from "./api.js";
 const STAGE_LABELS = {
   intake: "Intake & Consent",
   safety_check: "Safety / Completeness",
-  insurance_pa: "Insurance Prior Auth",
   telehealth: "Telehealth Visit",
+  insurance_pa: "Insurance Prior Auth",
   pharmacy: "Pharmacy Fulfillment",
   logistics: "Logistics / Delivery",
   refill: "Adherence & Refill",

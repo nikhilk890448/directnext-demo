@@ -3,6 +3,7 @@ import { supabase } from "../db.js";
 import { appendAudit } from "../hash.js";
 import { STAGES, nextStage, dueAt } from "../workflow.js";
 import { runAgent } from "../agents.js";
+import { runEligibilityCheck, synthesizeClinicalSummary } from "../eligibility-check.js";
 
 export const journeysRouter = Router();
 
@@ -51,17 +52,15 @@ journeysRouter.post("/:id/tasks/:taskId/resolve", async (req, res) => {
 });
 
 // POST /api/journeys/:id/simulate-next — DEMO ONLY. Stands in for a real
-// partner (payer / telehealth / pharmacy / courier) responding, since none
-// of those integrations exist yet. Advances the journey one stage and runs
-// the relevant agent stub along the way.
+// partner (telehealth / pharmacy / courier) responding, since none of those
+// integrations exist yet. Advances the journey one stage.
 journeysRouter.post("/:id/simulate-next", async (req, res) => {
   const { id } = req.params;
   const { data: journey } = await supabase.from("journeys").select("*, patients(*)").eq("id", id).maybeSingle();
   if (!journey) return res.status(404).json({ ok: false, error: "not found" });
 
-  // insurance_pa is no longer advanced from here — it fires automatically at
-  // intake time and from then on only moves via the payer-simulator's own
-  // console (pending_review → Approve/Deny → calls back to
+  // insurance_pa only moves via the payer-simulator's own console
+  // (pending_review → Approve/Deny → calls back to
   // /api/journeys/:id/eligibility-decision). The pharma dashboard shouldn't
   // be the place coverage decisions get made. Checked before touching
   // anything so a rejected request doesn't log a bogus stage-history entry.
@@ -83,12 +82,40 @@ journeysRouter.post("/:id/simulate-next", async (req, res) => {
     exited_at: now.toISOString(), duration_hours: +((now - enteredAt) / 3600000).toFixed(2),
   });
 
+  // Leaving telehealth captures the clinical note that a real EHR/telehealth
+  // platform would produce — this is what travels with the prior auth
+  // request next, so it has to exist before insurance_pa can be reached.
+  let clinicalSummary = journey.clinical_summary;
+  if (journey.current_stage === "telehealth") {
+    clinicalSummary = synthesizeClinicalSummary(patient);
+    await supabase.from("journeys").update({ clinical_summary: clinicalSummary }).eq("id", id);
+    await appendAudit({ journeyId: id, actor: "clinician:telehealth", decision: "visit completed — clinical summary recorded", fieldsShared: "diagnosis + rationale (to payer only)" });
+  }
+
   if (journey.current_stage === "refill") {
     const adherence = await runAgent("adherence", patient);
     await appendAudit({ journeyId: id, actor: "agent:adherence", decision: `adherence score computed: ${adherence.result?.score ?? "n/a"}`, fieldsShared: "score only" });
   }
 
-  const next = nextStage(journey.current_stage);
+  const skipInsurance = patient.billing_method === "direct";
+  const next = nextStage(journey.current_stage, { skipInsurance });
+
+  if (next && next.key === "insurance_pa") {
+    // Advance into insurance_pa, then immediately fire the prior-auth
+    // request — same pattern as before, just triggered from this point in
+    // the workflow instead of at intake.
+    await supabase.from("journeys").update({
+      current_stage: "insurance_pa", status: "in_progress",
+      stage_entered_at: now.toISOString(), sla_due_at: dueAt(now, next.slaHours),
+      updated_at: now.toISOString(),
+    }).eq("id", id);
+    await supabase.from("journey_events").insert({ journey_id: id, event_type: "stage_advanced", payload: { to: "insurance_pa" } });
+    await appendAudit({ journeyId: id, actor: "dispatcher", decision: "advanced to insurance_pa", fieldsShared: "—" });
+
+    const result = await runEligibilityCheck({ journey: { ...journey, id, clinical_summary: clinicalSummary }, patient });
+    return res.json({ ok: true, held: result.held, stage: result.stage, status: "in_progress" });
+  }
+
   const status = next ? "in_progress" : "completed";
   const stageKey = next ? next.key : journey.current_stage;
   const slaHours = next ? next.slaHours : 0;

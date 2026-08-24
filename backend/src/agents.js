@@ -24,6 +24,12 @@ export function checkIntakeCompleteness(patient) {
 export function guardrailCheck(patient) {
   if (!patient.condition) return { pass: false, reason: "No condition on file" };
   if (!patient.consent?.care_coordination) return { pass: false, reason: "Care-coordination consent not captured" };
+  if (patient.billing_method === "insurance") {
+    const ins = patient.insurance;
+    const required = ["payer_id", "member_id"];
+    const missing = required.filter((f) => !ins?.[f]);
+    if (!ins || missing.length) return { pass: false, reason: `Opted into insurance billing but missing: ${missing.join(", ") || "insurance details"}` };
+  }
   return { pass: true, reason: null };
 }
 

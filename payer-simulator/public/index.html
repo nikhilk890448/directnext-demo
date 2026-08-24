@@ -34,6 +34,12 @@
   .checklist{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:5px;font-size:12px;}
   .checklist li{display:flex;justify-content:space-between;}
   .ok{color:var(--green);} .missing{color:var(--red);}
+  .section{margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border);}
+  .section:last-of-type{border-bottom:none;}
+  .section h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);}
+  .kv{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:3px 0;}
+  .kv span:first-child{color:var(--faint);}
+  .necessity{margin-top:8px;font-size:12px;line-height:1.5;background:var(--panel2);border-radius:6px;padding:10px;color:var(--text);}
   .btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:6px;font-size:12.5px;margin-right:8px;cursor:pointer;}
   .btn.approve{border-color:var(--green);color:var(--green);}
   .btn.deny{border-color:var(--red);color:var(--red);}
@@ -71,6 +77,8 @@ const REQUIRED_LABELS = [
   ["subscriber.lastName", "Subscriber last name"],
   ["subscriber.dob", "Subscriber DOB"],
   ["serviceTypeCode", "Service type code"],
+  ["clinical.diagnosisCode", "Diagnosis code"],
+  ["clinical.medicalNecessity", "Medical necessity rationale"],
 ];
 
 function get(obj, path) {
@@ -116,6 +124,11 @@ function renderDetail() {
     return `<li><span>${label}</span><span class="${present ? "ok" : "missing"}">${present ? "✓ received" : "✗ missing"}</span></li>`;
   }).join("");
 
+  const sub = r.request?.subscriber || {};
+  const dep = r.request?.dependent;
+  const clin = r.request?.clinical || {};
+  const patientName = dep ? `${dep.firstName || ""} ${dep.lastName || ""}`.trim() : `${sub.firstName || ""} ${sub.lastName || ""}`.trim();
+
   let actions = "";
   if (r.status === "pending_review") {
     actions = `
@@ -130,7 +143,30 @@ function renderDetail() {
   el.innerHTML = `
     <h3>Request detail</h3>
     <p style="font-size:11px;color:var(--faint);margin-bottom:10px">Journey: <span class="mono">${r.journey_id}</span></p>
-    <ul class="checklist">${checklist}</ul>
+
+    <div class="section">
+      <h4>Patient</h4>
+      <div class="kv"><span>Name</span><span>${patientName || "—"}</span></div>
+      <div class="kv"><span>DOB</span><span>${(dep ? dep.dob : sub.dob) || "—"}</span></div>
+      ${dep ? `<div class="kv"><span>Relationship to subscriber</span><span>${dep.relationship}</span></div>` : ""}
+      <div class="kv"><span>Subscriber member ID</span><span class="mono">${sub.memberId || "—"}</span></div>
+      <div class="kv"><span>Payer</span><span>${r.request?.payerName || r.request?.payerId || "—"}</span></div>
+    </div>
+
+    <div class="section">
+      <h4>Clinical documentation</h4>
+      <div class="kv"><span>Diagnosis</span><span>${clin.diagnosisLabel || "—"} <span class="mono">(${clin.diagnosisCode || "—"})</span></span></div>
+      <div class="kv"><span>Prescribed therapy</span><span>${clin.prescribedTherapy || "—"}</span></div>
+      <div class="kv"><span>Clinician</span><span>${clin.clinicianName || "—"}</span></div>
+      <div class="kv"><span>Visit date</span><span class="mono">${clin.visitDate || "—"}</span></div>
+      <div class="necessity">${clin.medicalNecessity || "No medical necessity rationale provided."}</div>
+    </div>
+
+    <div class="section">
+      <h4>Field completeness</h4>
+      <ul class="checklist">${checklist}</ul>
+    </div>
+
     ${actions}
   `;
 }
