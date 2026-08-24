@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { supabase } from "../db.js";
 import { authClient } from "../authClient.js";
 import { requirePatientAuth } from "../auth.js";
+import { restGet } from "../rest.js";
 import { STAGES } from "../workflow.js";
 
 export const patientRouter = Router();
@@ -22,23 +22,15 @@ patientRouter.post("/login", async (req, res) => {
 patientRouter.get("/me", requirePatientAuth, async (req, res) => {
   const patient = req.patient;
 
-  const { data: journey } = await supabase
-    .from("journeys")
-    .select("*")
-    .eq("patient_id", patient.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const journeyPath = `journeys?patient_id=eq.${patient.id}&order=created_at.desc&limit=1&select=*`;
+  const { data: journeys } = await restGet(journeyPath);
+  const journey = Array.isArray(journeys) && journeys.length ? journeys[0] : null;
 
   let tasks = [];
   if (journey) {
-    const { data } = await supabase
-      .from("tasks")
-      .select("*")
-      .eq("journey_id", journey.id)
-      .eq("status", "open")
-      .order("created_at", { ascending: false });
-    tasks = data || [];
+    const tasksPath = `tasks?journey_id=eq.${journey.id}&status=eq.open&order=created_at.desc&select=*`;
+    const { data } = await restGet(tasksPath);
+    tasks = Array.isArray(data) ? data : [];
   }
 
   res.json({
