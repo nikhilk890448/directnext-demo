@@ -2,7 +2,7 @@ import { Router } from "express";
 import { supabase } from "../db.js";
 import { appendAudit } from "../hash.js";
 import { STAGES, dueAt } from "../workflow.js";
-import { checkIntakeCompleteness, guardrailCheck, runAgent } from "../agents.js";
+import { checkIntakeCompleteness, runAgent } from "../agents.js";
 
 export const intakeRouter = Router();
 
@@ -12,6 +12,27 @@ function genPatientRef() {
 
 intakeRouter.post("/", async (req, res) => {
   const body = req.body || {};
+
+  if (!body.password || body.password.length < 8) {
+    return res.status(400).json({ ok: false, error: "weak_password", message: "Password must be at least 8 characters." });
+  }
+
+  const insurance = body.hasInsurance
+    ? {
+        payer_id: body.insurance?.payerId || null,
+        payer_name: body.insurance?.payer || null,
+        member_id: body.insurance?.memberId || null,
+        group_number: body.insurance?.groupNumber || null,
+        relationship_to_subscriber: body.insurance?.relationship || "self",
+        subscriber_first_name: body.insurance?.subscriberFirstName || null,
+        subscriber_last_name: body.insurance?.subscriberLastName || null,
+        subscriber_dob: body.insurance?.subscriberDob || null,
+        rx_bin: body.insurance?.rxBin || null,
+        rx_pcn: body.insurance?.rxPcn || null,
+        rx_group: body.insurance?.rxGroup || null,
+      }
+    : null;
+
   const patientDraft = {
     first_name: body.firstName,
     last_name: body.lastName,
@@ -20,18 +41,29 @@ intakeRouter.post("/", async (req, res) => {
     phone: body.phone || null,
     address: body.address || null,
     condition: body.condition,
-    insurance: body.insurance || null,
+    insurance,
     consent: { care_coordination: !!body.consentCareCoordination },
     patient_ref: genPatientRef(),
   };
 
-  // Agent 1: intake completeness (ORCH, fail-open) — runs against the raw
-  // draft before anything is persisted, so an incomplete submission never
-  // silently becomes a stuck journey.
   const completeness = checkIntakeCompleteness(patientDraft);
   if (!completeness.pass) {
     return res.status(400).json({ ok: false, error: "incomplete_intake", missingFields: completeness.missingFields });
   }
+
+  // Create the login account first — if this fails (e.g. email already
+  // registered), we haven't written any patient/journey rows yet.
+  const { data: authUser, error: authErr } = await supabase.auth.admin.createUser({
+    email: body.email,
+    password: body.password,
+    email_confirm: true,
+    user_metadata: { patient_ref: patientDraft.patient_ref },
+  });
+  if (authErr) {
+    const msg = /already/i.test(authErr.message) ? "An account with this email already exists." : authErr.message;
+    return res.status(400).json({ ok: false, error: "account_creation_failed", message: msg });
+  }
+  patientDraft.auth_user_id = authUser.user.id;
 
   const { data: patient, error: pErr } = await supabase.from("patients").insert(patientDraft).select().single();
   if (pErr) return res.status(500).json({ ok: false, error: pErr.message });
@@ -64,8 +96,6 @@ intakeRouter.post("/", async (req, res) => {
     consentBasis: "consent",
   });
 
-  // Agent 2: appropriateness guardrail (GOV, fail-closed). If it can't clear,
-  // the journey holds right here and a PHI-free task explains why.
   const guardrail = await runAgent("guardrail", patientDraft);
   const guardrailPass = guardrail.failClosed ? false : guardrail.result?.pass;
 
@@ -77,17 +107,10 @@ intakeRouter.post("/", async (req, res) => {
       priority: "high",
       assigned_role: "Governance",
     });
-    await appendAudit({
-      journeyId: journey.id,
-      actor: "agent:guardrail",
-      decision: "guardrail hold created at intake",
-      fieldsShared: "—",
-    });
+    await appendAudit({ journeyId: journey.id, actor: "agent:guardrail", decision: "guardrail hold created at intake", fieldsShared: "—" });
     return res.status(201).json({ ok: true, patientRef: patient.patient_ref, journeyId: journey.id, stage: "intake", held: true });
   }
 
-  // Guardrail cleared — advance straight to the safety/completeness stage,
-  // then on into insurance PA, so the demo shows real movement immediately.
   const nextEntered = new Date();
   await supabase.from("journeys").update({
     current_stage: "insurance_pa",

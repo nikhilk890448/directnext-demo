@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Payer Console — Eligibility Review (Demo)</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#141d2f; --panel2:#1a2438; --border:#293650;
+    --text:#e8edf7; --dim:#93a4c2; --faint:#5b6c8c;
+    --amber:#e8a33d; --green:#4ade80; --red:#f0576b; --cyan:#4fc3e0;
+    font-family:system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);padding:20px 24px 50px;}
+  h1{font-size:16px;margin:0 0 3px;}
+  .sub{font-size:11.5px;color:var(--faint);margin-bottom:18px;}
+  .note{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:9px 12px;font-size:11px;color:var(--faint);margin-bottom:16px;}
+  .grid{display:grid;grid-template-columns:1fr 360px;gap:16px;align-items:start;}
+  @media(max-width:900px){.grid{grid-template-columns:1fr;}}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th{text-align:left;color:var(--faint);font-size:10.5px;text-transform:uppercase;padding:8px;border-bottom:1px solid var(--border);}
+  td{padding:9px 8px;border-bottom:1px solid var(--border);}
+  tr{cursor:pointer;}
+  tr:hover{background:var(--panel2);}
+  tr.selected{background:var(--panel2);}
+  .badge{font-size:10px;padding:2px 8px;border-radius:20px;font-family:monospace;}
+  .b-needs_info{background:rgba(232,163,61,.15);color:var(--amber);}
+  .b-pending_review{background:rgba(79,195,224,.15);color:var(--cyan);}
+  .b-auto_approved,.b-approved{background:rgba(74,222,128,.15);color:var(--green);}
+  .b-auto_denied,.b-denied{background:rgba(240,87,107,.15);color:var(--red);}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;}
+  .card h3{margin:0 0 10px;font-size:13px;}
+  .checklist{list-style:none;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:5px;font-size:12px;}
+  .checklist li{display:flex;justify-content:space-between;}
+  .ok{color:var(--green);} .missing{color:var(--red);}
+  .btn{background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 14px;border-radius:6px;font-size:12.5px;margin-right:8px;cursor:pointer;}
+  .btn.approve{border-color:var(--green);color:var(--green);}
+  .btn.deny{border-color:var(--red);color:var(--red);}
+  .empty{color:var(--faint);font-size:12.5px;padding:16px;}
+  .mono{font-family:monospace;}
+  textarea{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px;font-size:12px;margin:8px 0;min-height:60px;}
+</style>
+</head>
+<body>
+  <h1>Payer Console — Eligibility Review</h1>
+  <div class="sub">Demo payer simulator · not a real insurance company</div>
+  <div class="note">This is the payer side of the eligibility check: it shows exactly what the requesting program sent, flags anything missing against the required field set, and lets a reviewer decide the ambiguous cases. Complete requests are usually auto-adjudicated instantly (same idea as a real-time 271 response); only "Pending review" needs a person here.</div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Incoming requests</h3>
+      <table id="table">
+        <thead><tr><th>Journey</th><th>Payer</th><th>Status</th><th>Received</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="card" id="detail">
+      <p class="empty">Select a request to see its fields.</p>
+    </div>
+  </div>
+
+<script>
+let requests = [];
+let selectedId = null;
+
+const REQUIRED_LABELS = [
+  ["payerId", "Payer ID"],
+  ["provider.npi", "Requesting NPI"],
+  ["subscriber.memberId", "Member ID"],
+  ["subscriber.lastName", "Subscriber last name"],
+  ["subscriber.dob", "Subscriber DOB"],
+  ["serviceTypeCode", "Service type code"],
+];
+
+function get(obj, path) {
+  return path.split(".").reduce((o, k) => (o ? o[k] : undefined), obj);
+}
+
+async function refresh() {
+  const res = await fetch("/api/requests");
+  const data = await res.json();
+  requests = data.requests || [];
+  renderTable();
+  if (selectedId) renderDetail();
+}
+
+function renderTable() {
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = "";
+  if (requests.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="4" class="empty">No requests received yet.</td></tr>';
+    return;
+  }
+  for (const r of requests) {
+    const tr = document.createElement("tr");
+    if (r.id === selectedId) tr.className = "selected";
+    tr.onclick = () => { selectedId = r.id; renderTable(); renderDetail(); };
+    tr.innerHTML = `
+      <td class="mono">${(r.journey_id || "").slice(0, 8)}…</td>
+      <td>${r.request?.payerName || r.request?.payerId || "—"}</td>
+      <td><span class="badge b-${r.status}">${r.status.replace("_", " ")}</span></td>
+      <td class="mono">${new Date(r.created_at).toLocaleTimeString()}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+function renderDetail() {
+  const r = requests.find((x) => x.id === selectedId);
+  const el = document.getElementById("detail");
+  if (!r) { el.innerHTML = '<p class="empty">Select a request to see its fields.</p>'; return; }
+
+  const checklist = REQUIRED_LABELS.map(([path, label]) => {
+    const present = !!get(r.request, path);
+    return `<li><span>${label}</span><span class="${present ? "ok" : "missing"}">${present ? "✓ received" : "✗ missing"}</span></li>`;
+  }).join("");
+
+  let actions = "";
+  if (r.status === "pending_review") {
+    actions = `
+      <textarea id="notes" placeholder="Optional note for a denial..."></textarea>
+      <button class="btn approve" onclick="decide('approved')">Approve</button>
+      <button class="btn deny" onclick="decide('denied')">Deny</button>
+    `;
+  } else if (r.decision) {
+    actions = `<p class="mono" style="font-size:11px;color:var(--faint)">${JSON.stringify(r.decision, null, 2)}</p>`;
+  }
+
+  el.innerHTML = `
+    <h3>Request detail</h3>
+    <p style="font-size:11px;color:var(--faint);margin-bottom:10px">Journey: <span class="mono">${r.journey_id}</span></p>
+    <ul class="checklist">${checklist}</ul>
+    ${actions}
+  `;
+}
+
+async function decide(outcome) {
+  const notes = document.getElementById("notes")?.value || "";
+  await fetch(`/api/requests/${selectedId}/decide`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision: outcome, notes }),
+  });
+  await refresh();
+}
+
+refresh();
+setInterval(refresh, 6000);
+</script>
+</body>
+</html>

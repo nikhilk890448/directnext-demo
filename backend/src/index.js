@@ -3,6 +3,8 @@ import cors from "cors";
 import { intakeRouter } from "./routes/intake.js";
 import { journeysRouter } from "./routes/journeys.js";
 import { agentsRouter } from "./routes/agents.js";
+import { patientRouter } from "./routes/patient.js";
+import { eligibilityRouter } from "./routes/eligibility.js";
 import { startSlaSweep } from "./sla-sweep.js";
 
 const app = express();
@@ -21,7 +23,9 @@ app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
 app.use("/api/intake", intakeRouter);
 app.use("/api/journeys", journeysRouter);
+app.use("/api/journeys", eligibilityRouter);
 app.use("/api/agents", agentsRouter);
+app.use("/api/patient", patientRouter);
 
 app.use((err, _req, res, _next) => {
   console.error(err);

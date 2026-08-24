@@ -69,18 +69,83 @@ journeysRouter.post("/:id/simulate-next", async (req, res) => {
     exited_at: now.toISOString(), duration_hours: +((now - enteredAt) / 3600000).toFixed(2),
   });
 
-  // Stage-specific agent stub, purely to make the demo feel alive.
+  // Stage-specific integration. insurance_pa now makes a REAL HTTP call to
+  // the standalone payer-simulator service — a genuine network hop to a
+  // separately deployed app, not an in-process function.
   if (journey.current_stage === "insurance_pa") {
-    const denial = await runAgent("denial-risk", patient);
-    await appendAudit({ journeyId: id, actor: "agent:denial-risk", decision: `denial-risk assessed: ${denial.result?.risk ?? "n/a"}`, fieldsShared: "risk tier only" });
-    if (denial.result?.risk === "high") {
+    if (!patient.insurance) {
       await supabase.from("tasks").insert({
-        journey_id: id, type: "Prior authorization at risk", reason: "Payer likely to deny — needs manual review before proceeding",
+        journey_id: id, type: "No insurance on file", reason: "No insurance provided at intake — route to patient assistance program",
         priority: "high", assigned_role: "Access & Benefits",
       });
-      await appendAudit({ journeyId: id, actor: "rule:G4", decision: "insurance_pa held — high denial risk", fieldsShared: "—" });
+      await appendAudit({ journeyId: id, actor: "rule:G4", decision: "insurance_pa held — no insurance on file", fieldsShared: "—" });
       return res.json({ ok: true, held: true, stage: "insurance_pa" });
     }
+
+    const ins = patient.insurance;
+    const isSelf = (ins.relationship_to_subscriber || "self") === "self";
+    const payload = {
+      requestId: id,
+      payerId: ins.payer_id,
+      payerName: ins.payer_name,
+      // No prescriber is on file yet (that happens at the telehealth stage
+      // in this program), so the requesting entity is the program itself.
+      provider: { npi: "1999999984", name: "DirectNEXT Care Program" },
+      subscriber: {
+        memberId: ins.member_id,
+        lastName: isSelf ? patient.last_name : ins.subscriber_last_name,
+        firstName: isSelf ? patient.first_name : ins.subscriber_first_name,
+        dob: isSelf ? patient.dob : ins.subscriber_dob,
+      },
+      dependent: isSelf ? null : { relationship: ins.relationship_to_subscriber, firstName: patient.first_name, lastName: patient.last_name, dob: patient.dob },
+      serviceTypeCode: "30",
+      dateOfService: now.toISOString().slice(0, 10),
+    };
+
+    let elig;
+    try {
+      const resp = await fetch(`${process.env.PAYER_SIMULATOR_URL}/eligibility/inquiry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      elig = await resp.json();
+    } catch (e) {
+      await appendAudit({ journeyId: id, actor: "gateway", decision: "payer-simulator unreachable — held for retry", fieldsShared: "—" });
+      await supabase.from("tasks").insert({
+        journey_id: id, type: "Eligibility check failed", reason: "Could not reach the payer service — will need a retry",
+        priority: "high", assigned_role: "Access & Benefits",
+      });
+      return res.json({ ok: true, held: true, stage: "insurance_pa" });
+    }
+
+    await appendAudit({ journeyId: id, actor: "payer-simulator", decision: `eligibility inquiry: ${elig.status}`, fieldsShared: "coverage status only" });
+
+    if (elig.status === "needs_info") {
+      await supabase.from("tasks").insert({
+        journey_id: id, type: "Eligibility inquiry incomplete",
+        reason: `Payer could not process — missing: ${(elig.missingFields || []).join(", ")}`,
+        priority: "high", assigned_role: "Access & Benefits",
+      });
+      return res.json({ ok: true, held: true, stage: "insurance_pa" });
+    }
+    if (elig.status === "auto_denied") {
+      await supabase.from("tasks").insert({
+        journey_id: id, type: "Prior authorization denied", reason: elig.decision?.reason || "Payer denied coverage",
+        priority: "high", assigned_role: "Access & Benefits",
+      });
+      return res.json({ ok: true, held: true, stage: "insurance_pa" });
+    }
+    if (elig.status === "pending_review") {
+      await supabase.from("tasks").insert({
+        journey_id: id, type: "Awaiting payer review", reason: "Eligibility is ambiguous — a payer reviewer needs to decide",
+        priority: "medium", assigned_role: "Access & Benefits",
+      });
+      // This journey will advance later via /api/journeys/:id/eligibility-decision,
+      // called by the payer-simulator's dashboard once a human decides.
+      return res.json({ ok: true, held: true, stage: "insurance_pa", pendingExternalReview: true });
+    }
+    // status === "auto_approved" — fall through to the normal advance below.
   }
   if (journey.current_stage === "refill") {
     const adherence = await runAgent("adherence", patient);
