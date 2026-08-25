@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pharmacy Console (Demo)</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#141d2f; --panel2:#1a2438; --border:#293650;
+    --text:#e8edf7; --dim:#93a4c2; --faint:#5b6c8c;
+    --green:#4ade80; --red:#f0576b; --cyan:#4fc3e0;
+    font-family:system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);padding:20px 24px 50px;}
+  h1{font-size:16px;margin:0 0 3px;}
+  .sub{font-size:11.5px;color:var(--faint);margin-bottom:16px;}
+  .note{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:9px 12px;font-size:11px;color:var(--faint);margin:12px 0 16px;}
+  .grid{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start;}
+  @media(max-width:900px){.grid{grid-template-columns:1fr;}}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th{text-align:left;color:var(--faint);font-size:10.5px;text-transform:uppercase;padding:8px;border-bottom:1px solid var(--border);}
+  td{padding:9px 8px;border-bottom:1px solid var(--border);}
+  tr{cursor:pointer;}
+  tr:hover{background:var(--panel2);}
+  tr.selected{background:var(--panel2);}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;}
+  .card h3{margin:0 0 10px;font-size:13px;}
+  .kv{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--border);}
+  .kv span:first-child{color:var(--faint);}
+  .btn{background:var(--panel2);border:1px solid var(--green);color:var(--green);padding:10px 16px;border-radius:6px;font-size:12.5px;cursor:pointer;width:100%;margin-top:14px;}
+  .empty{color:var(--faint);font-size:12.5px;padding:16px;}
+  .mono{font-family:monospace;}
+</style>
+</head>
+<body>
+  <h1>Pharmacy Console</h1>
+  <div class="sub">Demo dispensing pharmacy · not affiliated with any pharma company</div>
+  <div class="note">Fulfillment fields only — shipping address and the prescribed therapy. No diagnosis, no narrative, no insurance detail is sent here; none of it is needed to dispense and ship.</div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Ready to fill</h3>
+      <table>
+        <thead><tr><th>Patient</th><th>Prescription</th><th>Waiting since</th></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="card" id="detail"><p class="empty">Select a patient to see fulfillment details.</p></div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
