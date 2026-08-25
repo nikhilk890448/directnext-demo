@@ -9,9 +9,18 @@ export const FIELD_CONTRACTS = {
   // The pharma workflow dashboard: stage/timing/status only, never PHI.
   dashboard: ["patient_ref", "current_stage", "status", "stage_entered_at", "sla_due_at", "is_breached"],
 
-  // Example partner scopes — extend these as real integrations are added.
-  telehealth: ["patient_ref", "condition", "preferred_contact"],
+  // The independent telehealth network. Clinical fields only — explicitly
+  // NO insurance/payer information. This is the routing/prescribing
+  // firewall: a clinician deciding treatment must not see which payer is
+  // involved or what it might reimburse, to keep the visit's outcome
+  // uncorrelated with coverage economics.
+  telehealth: ["patient_ref", "condition", "narrative", "preferred_contact"],
+
+  // The dispensing pharmacy. Fulfillment fields only — no diagnosis, no
+  // narrative, no insurance detail. Just what's needed to ship the
+  // prescribed therapy to the right place.
   pharmacy: ["patient_ref", "shipping_address", "prescription"],
+
   logistics: ["patient_ref", "shipping_address"],
 };
 

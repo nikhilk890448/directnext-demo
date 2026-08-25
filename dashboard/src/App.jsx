@@ -12,6 +12,10 @@ const STAGE_LABELS = {
 };
 const STAGE_ORDER = Object.keys(STAGE_LABELS);
 
+// Stages that now belong to their own partner console — the pharma
+// dashboard shows a status note instead of a "Simulate next" button.
+const CONSOLE_OWNED_STAGES = { insurance_pa: "Awaiting payer", telehealth: "Awaiting telehealth", pharmacy: "Awaiting pharmacy" };
+
 export default function App() {
   const [journeys, setJourneys] = useState([]);
   const [agents, setAgents] = useState([]);
@@ -141,13 +145,13 @@ export default function App() {
                         </span>
                       </td>
                       <td>
-                        {j.status === "in_progress" && j.current_stage !== "insurance_pa" && (
+                        {j.status === "in_progress" && !CONSOLE_OWNED_STAGES[j.current_stage] && (
                           <button className="minibtn" onClick={(e) => { e.stopPropagation(); handleSimulate(j.journey_id); }}>
                             Simulate next ▸
                           </button>
                         )}
-                        {j.status === "in_progress" && j.current_stage === "insurance_pa" && (
-                          <span className="dim" style={{ fontSize: 11 }}>Awaiting payer</span>
+                        {j.status === "in_progress" && CONSOLE_OWNED_STAGES[j.current_stage] && (
+                          <span className="dim" style={{ fontSize: 11 }}>{CONSOLE_OWNED_STAGES[j.current_stage]}</span>
                         )}
                       </td>
                     </tr>
@@ -184,11 +188,11 @@ function JourneyDetail({ detail, onResolve, onSimulate }) {
       <p className="small">Current stage: <strong>{STAGE_LABELS[j.current_stage] || j.current_stage}</strong></p>
       <p className="small">SLA due: <span className="mono">{j.sla_due_at ? new Date(j.sla_due_at).toLocaleString() : "—"}</span></p>
 
-      {j.status === "in_progress" && j.current_stage !== "insurance_pa" && (
+      {j.status === "in_progress" && !CONSOLE_OWNED_STAGES[j.current_stage] && (
         <button className="btn primary" onClick={() => onSimulate(j.journey_id)}>Simulate partner response ▸</button>
       )}
-      {j.status === "in_progress" && j.current_stage === "insurance_pa" && (
-        <p className="small" style={{ color: "var(--cyan)" }}>Waiting on the payer — decisions for this stage happen in the payer console, not here.</p>
+      {j.status === "in_progress" && CONSOLE_OWNED_STAGES[j.current_stage] && (
+        <p className="small" style={{ color: "var(--cyan)" }}>Waiting on {j.current_stage === "insurance_pa" ? "the payer" : j.current_stage === "telehealth" ? "the telehealth partner" : "the pharmacy"} — this stage is handled in that partner's own console, not here.</p>
       )}
 
       <h4 className="sectionhead">Stage history</h4>

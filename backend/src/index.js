@@ -5,6 +5,7 @@ import { journeysRouter } from "./routes/journeys.js";
 import { agentsRouter } from "./routes/agents.js";
 import { patientRouter } from "./routes/patient.js";
 import { eligibilityRouter } from "./routes/eligibility.js";
+import { partnersRouter } from "./routes/partners.js";
 import { startSlaSweep } from "./sla-sweep.js";
 
 const app = express();
@@ -26,6 +27,7 @@ app.use("/api/journeys", journeysRouter);
 app.use("/api/journeys", eligibilityRouter);
 app.use("/api/agents", agentsRouter);
 app.use("/api/patient", patientRouter);
+app.use("/api/partner", partnersRouter);
 
 app.use((err, _req, res, _next) => {
   console.error(err);

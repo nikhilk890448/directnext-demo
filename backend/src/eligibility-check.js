@@ -110,19 +110,3 @@ export async function runEligibilityCheck({ journey, patient }) {
 
   return { stage: next.key, held: false };
 }
-
-/** Deterministic synthetic clinical note, standing in for a real telehealth EHR export. */
-export function synthesizeClinicalSummary(patient) {
-  const DIAGNOSIS_CODES = {
-    "Rheumatoid Arthritis": "M06.9", "Plaque Psoriasis": "L40.0", "Type 2 Diabetes": "E11.9",
-    "Multiple Sclerosis": "G35", "Chronic Migraine": "G43.709", "Crohn's Disease": "K50.90",
-  };
-  return {
-    diagnosisCode: DIAGNOSIS_CODES[patient.condition] || "R69",
-    diagnosisLabel: patient.condition,
-    prescribedTherapy: `${patient.condition} — first-line biologic per program formulary`,
-    medicalNecessity: `Patient has documented ${patient.condition} with inadequate response to prior conservative therapy. Prescriber attests this treatment is medically necessary per current clinical guidelines.`,
-    clinicianName: "Dr. A. Okonkwo (telehealth)",
-    visitDate: new Date().toISOString().slice(0, 10),
-  };
-}
