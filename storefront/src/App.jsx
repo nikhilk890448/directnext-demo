@@ -19,24 +19,11 @@ const PAYERS = [
 ];
 const RELATIONSHIPS = ["Self", "Spouse", "Child", "Other"];
 
-// Illustrative demo figures only — not real pricing. listPrice = typical
-// monthly self-pay/cash price; insuranceCopay = typical monthly
-// out-of-pocket if billed through insurance (after a benefit is confirmed).
-const THERAPY_PRICING = {
-  "Rheumatoid Arthritis": { listPrice: 6200, insuranceCopay: 45 },
-  "Plaque Psoriasis": { listPrice: 5800, insuranceCopay: 40 },
-  "Type 2 Diabetes": { listPrice: 950, insuranceCopay: 25 },
-  "Multiple Sclerosis": { listPrice: 7200, insuranceCopay: 50 },
-  "Chronic Migraine": { listPrice: 1450, insuranceCopay: 30 },
-  "Crohn's Disease": { listPrice: 6900, insuranceCopay: 45 },
-  "Something else": { listPrice: 3000, insuranceCopay: 35 },
-};
-
 // Matches backend/src/workflow.js STAGES order exactly — used to compute
 // "how far along" a journey is without hardcoding stage-specific indices.
 const STAGE_KEYS = ["intake", "safety_check", "telehealth", "insurance_pa", "pharmacy", "logistics", "refill"];
 
-const STEPS = ["Welcome", "About you", "Account", "Coverage & Cost", "Consent", "Review"];
+const STEPS = ["Welcome", "About you", "Account", "Coverage", "Consent", "Review"];
 
 const EMPTY = {
   condition: "",
@@ -104,7 +91,6 @@ function RegisterFlow({ goLogin }) {
     setError(null);
     try {
       const payerObj = PAYERS.find((p) => p.name === form.payer);
-      const pricing = THERAPY_PRICING[form.condition] || THERAPY_PRICING["Something else"];
       const payload = {
         firstName: form.firstName, lastName: form.lastName, dob: form.dob,
         email: form.email, phone: form.phone, password: form.password,
@@ -112,7 +98,6 @@ function RegisterFlow({ goLogin }) {
         condition: form.condition,
         narrative: form.narrative || null,
         billingMethod: form.billingMethod,
-        costEstimate: { insuranceMonthly: pricing.insuranceCopay, directMonthly: pricing.listPrice },
         insurance: form.billingMethod === "insurance" ? {
           payer: form.payer, payerId: payerObj?.id || "OTHER",
           memberId: form.memberId, groupNumber: form.groupNumber,
@@ -238,27 +223,11 @@ function Account({ form, update }) {
 }
 
 function Insurance({ form, update }) {
-  const pricing = THERAPY_PRICING[form.condition] || THERAPY_PRICING["Something else"];
   return (
     <div className="step">
-      <h2>Coverage &amp; cost</h2>
-      <p className="stepdesc">Here's what this typically costs each month, so you can choose how to pay before we check anything.</p>
+      <h2>Coverage</h2>
+      <p className="stepdesc">How would you like to pay for this? Your clinician will decide on the actual treatment at your visit — cost details come after that, once we know what's being prescribed.</p>
 
-      <div className="costcompare">
-        <div className={"costcard" + (form.billingMethod === "insurance" ? " costactive" : "")}>
-          <div className="costlabel">Through insurance</div>
-          <div className="costvalue">~${pricing.insuranceCopay}<span>/mo</span></div>
-          <div className="costnote">Typical copay once a benefit is confirmed</div>
-        </div>
-        <div className={"costcard" + (form.billingMethod === "direct" ? " costactive" : "")}>
-          <div className="costlabel">Paying direct</div>
-          <div className="costvalue">~${pricing.listPrice.toLocaleString()}<span>/mo</span></div>
-          <div className="costnote">List price, no insurance involved</div>
-        </div>
-      </div>
-      <p className="hint">Estimates only — your actual cost depends on your specific plan.</p>
-
-      <h3 className="subhead">How would you like to pay?</h3>
       <div className="togglerow">
         <button className={"toggle" + (form.billingMethod === "insurance" ? " toggleactive" : "")} onClick={() => update("billingMethod", "insurance")}>Use my insurance</button>
         <button className={"toggle" + (form.billingMethod === "direct" ? " toggleactive" : "")} onClick={() => update("billingMethod", "direct")}>Pay directly</button>
@@ -500,13 +469,6 @@ function Style() {
       .togglerow{display:flex;gap:8px;}
       .toggle{flex:1;padding:13px;border-radius:12px;border:1.5px solid var(--line);background:#fff;font-size:13.5px;font-weight:600;color:var(--sub);cursor:pointer;}
       .toggleactive{border-color:var(--brand);color:var(--brand-dark);background:var(--brand-tint);}
-      .costcompare{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0 8px;}
-      .costcard{border:1.5px solid var(--line);border-radius:14px;padding:16px;text-align:center;}
-      .costcard.costactive{border-color:var(--brand);background:var(--brand-tint);}
-      .costlabel{font-size:11.5px;color:var(--sub);font-weight:600;text-transform:uppercase;letter-spacing:.03em;}
-      .costvalue{font-family:var(--fd);font-size:24px;font-weight:700;margin-top:6px;color:var(--ink);}
-      .costvalue span{font-size:13px;font-weight:500;color:var(--sub);}
-      .costnote{font-size:11px;color:var(--sub);margin-top:4px;}
       .hint{font-size:12.5px;color:var(--sub);background:var(--bg);border-radius:10px;padding:10px 12px;margin-top:14px;}
       .linkbtn{background:none;border:none;color:var(--brand);font-size:12.5px;font-weight:600;cursor:pointer;padding:0;}
       .consentlist{margin:0 0 18px;padding-left:18px;color:var(--sub);font-size:13px;line-height:1.7;}
