@@ -13,64 +13,113 @@ function hashToUnit(str) {
   return (h % 1000) / 1000;
 }
 
-/** Governance — ORCH plane. Checks the intake payload for missing required fields. */
-export function checkIntakeCompleteness(patient) {
-  const required = ["first_name", "last_name", "dob", "email", "condition"];
-  const missing = required.filter((f) => !patient[f]);
-  return { pass: missing.length === 0, missingFields: missing };
-}
+// Conditions where a prior-auth requirement is more likely — a coarse,
+// declared heuristic (not a real payer-policy lookup), used only to set an
+// early expectation carried forward to the insurance_pa stage.
+const PA_LIKELY_CONDITIONS = ["Rheumatoid Arthritis", "Multiple Sclerosis", "Crohn's Disease"];
 
-/** Governance — GOV plane, fail-closed. Basic policy hard-stops before any clinician handoff. */
-export async function guardrailCheck(patient) {
-  if (!patient.condition) return { pass: false, reason: "No condition on file" };
-  if (!patient.consent?.care_coordination) return { pass: false, reason: "Care-coordination consent not captured" };
-  if (patient.billing_method === "insurance") {
-    const ins = patient.insurance;
-    const required = ["payer_id", "member_id"];
-    const missing = required.filter((f) => !ins?.[f]);
-    if (!ins || missing.length) return { pass: false, reason: `Opted into insurance billing but missing: ${missing.join(", ") || "insurance details"}` };
+/**
+ * A01 — Eligibility & Benefits, ORCH plane, fail-open. Runs FIRST, before
+ * any patient/journey record is even created. This is the single gate for
+ * everything about whether the submission is usable at all:
+ *   1. Intake completeness — the required fields are present.
+ *   2. Consent — care-coordination consent was captured. Required on both
+ *      paths, but especially load-bearing on the insurance path, since it's
+ *      what makes sharing with the payer for a coverage determination
+ *      legitimate later at insurance_pa.
+ *   3. If billing_method is "insurance": the insurance fields needed to
+ *      even attempt a coverage check are present (payer_id, member_id).
+ * A03, downstream, is purely the clinical/policy layer — it doesn't
+ * re-check any of this.
+ */
+export function checkEligibility(patient) {
+  const requiredFields = ["first_name", "last_name", "dob", "email", "condition"];
+  const missingFields = requiredFields.filter((f) => !patient[f]);
+  if (missingFields.length) {
+    return { pass: false, reason: `Incomplete intake — missing: ${missingFields.join(", ")}`, missingFields, pathway: null, paRequired: null };
   }
 
-  // Rules pass. The NLP layer below can only tighten this result — it can
-  // raise a hold or an advisory flag, never turn a rules failure into a
-  // pass, and never blocks intake if it's unavailable (fails open to the
-  // rules-only result above).
+  if (!patient.consent?.care_coordination) {
+    return { pass: false, reason: "Care-coordination consent not captured", pathway: null, paRequired: null };
+  }
+
+  if (patient.billing_method !== "insurance") {
+    return { pass: true, reason: null, pathway: "self-pay", paRequired: false };
+  }
+
+  const ins = patient.insurance;
+  const required = ["payer_id", "member_id"];
+  const missing = required.filter((f) => !ins?.[f]);
+  if (!ins || missing.length) {
+    return { pass: false, reason: `Opted into insurance billing but missing: ${missing.join(", ") || "insurance details"}`, pathway: "hold", paRequired: null };
+  }
+  return { pass: true, reason: null, pathway: "insured", paRequired: PA_LIKELY_CONDITIONS.includes(patient.condition) };
+}
+
+/**
+ * A03 — Appropriateness Guardrail, GOV plane, fail-closed. Runs SECOND,
+ * only once A01 has already cleared completeness, consent, and (if
+ * applicable) insurance fields — none of that is re-checked here. This is
+ * purely the clinical/policy layer: the NLP narrative check for drug
+ * pre-selection and any contraindication-adjacent mention. It can only add
+ * a hold or a flag on top of an already-clean intake; it never has
+ * anything of its own to fail on besides what the NLP layer finds.
+ */
+export async function guardrailCheck(patient) {
   const nlp = await checkNarrativeGuardrail(patient);
   if (nlp.drugPreSelected) {
-    return { pass: false, reason: "Narrative names a specific drug before the visit — policy requires the clinician to determine treatment" };
+    return { pass: false, reason: "Narrative names a specific drug before the visit — policy requires the clinician to determine treatment", nlpProvenance: nlp };
   }
-  return { pass: true, reason: null, advisoryFlag: nlp.contraindicationMention || null };
+  return { pass: true, reason: null, advisoryFlag: nlp.contraindicationMention || null, nlpProvenance: nlp };
 }
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+// Gemini model names get deprecated/rotated fairly often (this is a known,
+// ongoing thing with the free tier). Try a short list in order and remember
+// whichever one actually works for this process, instead of hardcoding one
+// string that can 404 again next month.
+const GEMINI_MODEL_CANDIDATES = ["gemini-2.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-flash-latest"];
+let workingGeminiModel = null;
 
 async function callGeminiJSON(prompt) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${key}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0 },
-        }),
+
+  const modelsToTry = workingGeminiModel ? [workingGeminiModel] : GEMINI_MODEL_CANDIDATES;
+
+  for (const model of modelsToTry) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { responseMimeType: "application/json", temperature: 0 },
+          }),
+        }
+      );
+      if (res.status === 404) {
+        console.log(`[a03-llm] model "${model}" not available (404), trying next candidate`);
+        continue; // this model is retired/unavailable — try the next one
       }
-    );
-    if (!res.ok) {
-      console.log("[a03-llm] Gemini call failed, status:", res.status);
+      if (!res.ok) {
+        console.log(`[a03-llm] Gemini call failed with model "${model}", status:`, res.status);
+        return null; // a non-404 failure (rate limit, bad request, etc.) — don't keep guessing models
+      }
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) return null;
+      workingGeminiModel = model; // remember it worked, skip straight to it next time
+      console.log(`[a03-llm] using model "${model}"`);
+      return JSON.parse(text);
+    } catch (e) {
+      console.log(`[a03-llm] Gemini call errored with model "${model}":`, e.message);
       return null;
     }
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return null;
-    return JSON.parse(text);
-  } catch (e) {
-    console.log("[a03-llm] Gemini call errored:", e.message);
-    return null;
   }
+  console.log("[a03-llm] no candidate model worked — falling back to rules-only");
+  return null;
 }
 
 /**
@@ -86,7 +135,7 @@ async function callGeminiJSON(prompt) {
  */
 async function checkNarrativeGuardrail(patient) {
   const narrative = (patient.narrative || "").trim();
-  if (!narrative) return { drugPreSelected: false, contraindicationMention: null };
+  if (!narrative) return { drugPreSelected: false, contraindicationMention: null, ran: false, model: null, skippedReason: "no narrative provided" };
 
   const prompt = `You are a policy compliance checker for a patient intake narrative. You do NOT diagnose or judge clinical appropriateness — only detect two things.
 
@@ -100,9 +149,9 @@ contraindicationMention = a short (under 15 words) neutral description of anythi
 
   const result = await callGeminiJSON(prompt);
   if (!result || typeof result.drugPreSelected !== "boolean") {
-    return { drugPreSelected: false, contraindicationMention: null };
+    return { drugPreSelected: false, contraindicationMention: null, ran: false, model: null, skippedReason: "model unavailable or returned an unparseable response — fell back to rules-only" };
   }
-  return result;
+  return { ...result, ran: true, model: workingGeminiModel, skippedReason: null };
 }
 
 /** ORCH. Predicts likelihood the payer denies prior authorization. */
@@ -128,7 +177,7 @@ export function predictAdherence(patient) {
 }
 
 const AGENT_FNS = {
-  "intake-completeness": checkIntakeCompleteness,
+  eligibility: checkEligibility,
   guardrail: guardrailCheck,
   "denial-risk": predictDenialRisk,
   "cost-optimizer": calculateCheapestOption,

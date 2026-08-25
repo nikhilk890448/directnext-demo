@@ -2,7 +2,7 @@ import { Router } from "express";
 import { supabase } from "../db.js";
 import { appendAudit } from "../hash.js";
 import { STAGES, nextStage, dueAt } from "../workflow.js";
-import { checkIntakeCompleteness, runAgent } from "../agents.js";
+import { runAgent } from "../agents.js";
 
 export const intakeRouter = Router();
 
@@ -45,15 +45,28 @@ intakeRouter.post("/", async (req, res) => {
     condition: body.condition,
     insurance,
     billing_method: billingMethod,
-    cost_estimate: body.costEstimate || null,
     narrative: body.narrative || null,
     consent: { care_coordination: !!body.consentCareCoordination },
     patient_ref: genPatientRef(),
   };
 
-  const completeness = checkIntakeCompleteness(patientDraft);
-  if (!completeness.pass) {
-    return res.status(400).json({ ok: false, error: "incomplete_intake", missingFields: completeness.missingFields });
+  // A01 runs FIRST, before any record exists — intake completeness,
+  // consent, and (if applicable) insurance-field presence. Nothing is
+  // written to the database until this clears. A rejection here is logged
+  // with journeyId: null since there's no journey yet to attach it to —
+  // A08's audit trail still gets a record of the attempt either way.
+  const eligibility = await runAgent("eligibility", patientDraft);
+  const elig = eligibility.result;
+  const eligPass = eligibility.failClosed ? false : (eligibility.failOpen ? true : elig?.pass);
+
+  if (!eligPass) {
+    await appendAudit({
+      journeyId: null,
+      actor: "agent:eligibility",
+      decision: `A01 rejected intake before record creation — ${elig?.reason || "agent unavailable"}`,
+      fieldsShared: "rejection reason only",
+    });
+    return res.status(400).json({ ok: false, error: "eligibility_check_failed", message: elig?.reason || "Intake could not be processed." });
   }
 
   // Create the login account first — if this fails (e.g. email already
@@ -85,6 +98,7 @@ intakeRouter.post("/", async (req, res) => {
       status: "in_progress",
       stage_entered_at: now.toISOString(),
       sla_due_at: dueAt(now, STAGES[0].slaHours),
+      pa_required: elig?.paRequired ?? null,
     })
     .select()
     .single();
@@ -104,12 +118,32 @@ intakeRouter.post("/", async (req, res) => {
     fieldsShared: "patient_ref, consent_scope",
     consentBasis: "consent",
   });
+  await appendAudit({
+    journeyId: journey.id,
+    actor: "agent:eligibility",
+    decision: elig
+      ? `A01 cleared — completeness, consent${billingMethod === "insurance" ? ", and insurance fields" : ""} verified; pathway: ${elig.pathway}${elig.paRequired ? " (PA likely)" : ""}`
+      : "A01 unavailable — proceeded on fail-open baseline (ORCH plane, never blocks a patient)",
+    fieldsShared: "pathway + PA-likely flag only",
+  });
 
-  // Agent: intake completeness already checked draft-side above; now the
-  // appropriateness guardrail (GOV, fail-closed) — also verifies insurance
-  // details are present when the patient opted into insurance billing.
+  // A03 runs SECOND — purely the clinical/policy layer now (drug
+  // pre-selection, contraindication flag). Completeness and consent were
+  // already A01's job, above.
   const guardrail = await runAgent("guardrail", patientDraft);
   const guardrailPass = guardrail.failClosed ? false : guardrail.result?.pass;
+
+  // Log the NLP layer's own provenance unconditionally — whether it ran,
+  // which model answered, and what it found — even when nothing was
+  // flagged. Without this, a clean pass left no record that an AI check
+  // happened at all.
+  if (guardrail.result?.nlpProvenance) {
+    const p = guardrail.result.nlpProvenance;
+    const decision = !p.ran
+      ? `A03 NLP layer skipped — ${p.skippedReason}`
+      : `A03 NLP layer checked narrative via ${p.model} — drug pre-selection: ${p.drugPreSelected}, contraindication mention: ${p.contraindicationMention ? "yes" : "none"}`;
+    await appendAudit({ journeyId: journey.id, actor: "agent:guardrail-nlp", decision, fieldsShared: "check outcome + model id only, never the narrative text itself" });
+  }
 
   if (!guardrailPass) {
     await supabase.from("tasks").insert({
