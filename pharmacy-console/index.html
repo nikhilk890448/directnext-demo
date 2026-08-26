@@ -8,7 +8,7 @@
   :root{
     --bg:#0b1220; --panel:#141d2f; --panel2:#1a2438; --border:#293650;
     --text:#e8edf7; --dim:#93a4c2; --faint:#5b6c8c;
-    --green:#4ade80; --red:#f0576b; --cyan:#4fc3e0;
+    --green:#4ade80; --red:#f0576b; --cyan:#4fc3e0; --amber:#e8a33d;
     font-family:system-ui,sans-serif;
   }
   *{box-sizing:border-box;}
@@ -16,7 +16,7 @@
   h1{font-size:16px;margin:0 0 3px;}
   .sub{font-size:11.5px;color:var(--faint);margin-bottom:16px;}
   .note{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:9px 12px;font-size:11px;color:var(--faint);margin:12px 0 16px;}
-  .grid{display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start;}
+  .grid{display:grid;grid-template-columns:1fr 380px;gap:16px;align-items:start;}
   @media(max-width:900px){.grid{grid-template-columns:1fr;}}
   table{width:100%;border-collapse:collapse;font-size:12.5px;}
   th{text-align:left;color:var(--faint);font-size:10.5px;text-transform:uppercase;padding:8px;border-bottom:1px solid var(--border);}
@@ -28,21 +28,34 @@
   .card h3{margin:0 0 10px;font-size:13px;}
   .kv{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--border);}
   .kv span:first-child{color:var(--faint);}
-  .btn{background:var(--panel2);border:1px solid var(--green);color:var(--green);padding:10px 16px;border-radius:6px;font-size:12.5px;cursor:pointer;width:100%;margin-top:14px;}
+  .badge{font-size:10px;padding:3px 8px;border-radius:20px;border:1px solid var(--border);color:var(--cyan);}
+  .btn{background:var(--panel2);border:1px solid var(--green);color:var(--green);padding:10px 16px;border-radius:6px;font-size:12.5px;cursor:pointer;width:100%;}
+  .btn.small{padding:7px 10px;font-size:11.5px;width:100%;margin-top:6px;}
+  .actionbox{margin:14px 0;}
+  .hint{font-size:12px;color:var(--amber);background:rgba(232,163,61,.1);border-radius:6px;padding:9px 11px;}
   .empty{color:var(--faint);font-size:12.5px;padding:16px;}
   .mono{font-family:monospace;}
+  .rxhead{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);margin:16px 0 8px;border-top:1px solid var(--border);padding-top:14px;}
+  select, textarea{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 10px;font-size:12.5px;font-family:inherit;margin-bottom:8px;}
+  textarea{min-height:60px;resize:vertical;}
+  .reqcard{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;}
+  .reqhead{display:flex;justify-content:space-between;margin-bottom:6px;}
+  .reqmsg{font-size:11.5px;color:var(--dim);margin:0 0 4px;}
+  .pill{font-size:10px;padding:2px 8px;border-radius:20px;border:1px solid var(--border);color:var(--faint);text-transform:capitalize;}
+  .pill-open{color:var(--amber);border-color:var(--amber);}
+  .pill-done{color:var(--green);border-color:var(--green);}
 </style>
 </head>
 <body>
   <h1>Pharmacy Console</h1>
   <div class="sub">Demo dispensing pharmacy · not affiliated with any pharma company</div>
-  <div class="note">Fulfillment fields only — shipping address and the prescribed therapy. No diagnosis, no narrative, no insurance detail is sent here; none of it is needed to dispense and ship.</div>
+  <div class="note">Fulfillment fields only — the prescription itself, shipping address, and payment/PA status. No diagnosis or narrative is sent here.</div>
 
   <div class="grid">
     <div class="card">
-      <h3>Ready to fill</h3>
+      <h3>Fulfillment queue</h3>
       <table>
-        <thead><tr><th>Patient</th><th>Prescription</th><th>Waiting since</th></tr></thead>
+        <thead><tr><th>Patient</th><th>Drug</th><th>Status</th><th>Payment</th></tr></thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>

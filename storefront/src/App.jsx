@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { submitIntake, login, fetchMe } from "./api.js";
+import { submitIntake, login, fetchMe, choosePaymentMethod, payNow } from "./api.js";
 
 const CONDITIONS = [
   "Rheumatoid Arthritis", "Plaque Psoriasis", "Type 2 Diabetes",
@@ -21,7 +21,7 @@ const RELATIONSHIPS = ["Self", "Spouse", "Child", "Other"];
 
 // Matches backend/src/workflow.js STAGES order exactly — used to compute
 // "how far along" a journey is without hardcoding stage-specific indices.
-const STAGE_KEYS = ["intake", "safety_check", "telehealth", "insurance_pa", "pharmacy", "logistics", "refill"];
+const STAGE_KEYS = ["intake", "safety_check", "telehealth", "pharmacy", "refill"];
 
 const STEPS = ["Welcome", "About you", "Account", "Coverage", "Consent", "Review"];
 
@@ -328,7 +328,7 @@ function SelectField({ label, value, onChange, options, wide }) {
 }
 
 function Confirmation({ result, name, goLogin }) {
-  const stages = ["Intake received", "Safety check", "Telehealth visit", "Insurance review", "Pharmacy", "On its way", "Refills"];
+  const stages = ["Intake received", "Safety check", "Telehealth visit", "Pharmacy & delivery", "Refills"];
   const activeIdx = Math.max(0, STAGE_KEYS.indexOf(result.stage));
   return (
     <div className="wrap">
@@ -386,18 +386,46 @@ function LoginView({ onSuccess }) {
 function PortalView({ onLogout }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
+  async function load() {
     const token = localStorage.getItem("dn_token");
     if (!token) { onLogout(); return; }
-    fetchMe(token).then(setData).catch(() => { setError("Session expired — please log in again."); localStorage.removeItem("dn_token"); });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    try { setData(await fetchMe(token)); }
+    catch (e) { setError("Session expired — please log in again."); localStorage.removeItem("dn_token"); }
+  }
+
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleChoose(method) {
+    setBusy(true);
+    const token = localStorage.getItem("dn_token");
+    try { await choosePaymentMethod(token, method); await load(); }
+    finally { setBusy(false); }
+  }
+  async function handlePay() {
+    setBusy(true);
+    const token = localStorage.getItem("dn_token");
+    try { await payNow(token, data.paymentRequest.id); await load(); }
+    finally { setBusy(false); }
+  }
 
   if (error) return <div className="wrap"><div className="card"><p>{error}</p><button className="btn primary" onClick={onLogout}>Back to login</button></div></div>;
   if (!data) return <div className="wrap"><p className="stepdesc">Loading…</p></div>;
 
-  const stages = ["Intake & Consent", "Safety / Completeness", "Telehealth Visit", "Insurance Prior Auth", "Pharmacy Fulfillment", "Logistics / Delivery", "Adherence & Refill"];
+  const stages = ["Intake & Consent", "Safety / Completeness", "Telehealth Visit", "Pharmacy Fulfillment", "Adherence & Refill"];
   const currentIdx = data.stages.indexOf(data.journey?.currentStage);
+  const j = data.journey;
+  const PHARMACY_STATUS_LABELS = {
+    prescription_received: "Prescription received — choose how to pay below",
+    payment_pending: "Awaiting your payment",
+    insurance_pa_pending: "Your pharmacy has submitted this to your insurer for approval",
+    payment_received: "Payment received — preparing your order",
+    insurance_approved: "Insurance approved — preparing your order",
+    dispensed: "Dispensed",
+    in_transit: "On its way to you",
+    delivered: "Delivered",
+  };
 
   return (
     <div className="wrap">
@@ -408,13 +436,43 @@ function PortalView({ onLogout }) {
       <div className="card">
         <h2>Hi, {data.patient.firstName}</h2>
         <p className="stepdesc">Reference: <strong className="ref">{data.patient.patientRef}</strong></p>
-        {data.journey ? (
+        {j ? (
           <>
             <div className="rail">
               {stages.map((s, i) => (
                 <div key={s} className={"railstep" + (i < currentIdx ? " done" : i === currentIdx ? " current" : "")}>{s}</div>
               ))}
             </div>
+
+            {j.currentStage === "pharmacy" && j.prescription && (
+              <div className="card" style={{ marginTop: 16 }}>
+                <h3 className="subhead" style={{ marginTop: 0 }}>Your prescription</h3>
+                <p className="stepdesc">{j.prescription.drugName} — {j.prescription.sig} (qty {j.prescription.quantity})</p>
+                <p className="stepdesc" style={{ fontWeight: 600 }}>{PHARMACY_STATUS_LABELS[j.pharmacyStatus] || j.pharmacyStatus}</p>
+
+                {j.pharmacyStatus === "prescription_received" && !j.fillPaymentMethod && data.pricing && (
+                  <>
+                    <div className="costcompare2">
+                      <button className="costopt" disabled={busy} onClick={() => handleChoose("insurance")}>
+                        <div className="costlabel">Use my insurance</div>
+                        <div className="costvalue">~${data.pricing.insurancePriceEstimate}</div>
+                      </button>
+                      <button className="costopt" disabled={busy} onClick={() => handleChoose("cash")}>
+                        <div className="costlabel">Pay directly</div>
+                        <div className="costvalue">${data.pricing.cashPrice}</div>
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {j.pharmacyStatus === "payment_pending" && data.paymentRequest && (
+                  <button className="btn primary mt" disabled={busy} onClick={handlePay}>
+                    Pay ${data.paymentRequest.amount} now
+                  </button>
+                )}
+              </div>
+            )}
+
             {data.tasksNeedingYou.length > 0 && (
               <div className="card" style={{ marginTop: 16, background: "#fff8ec" }}>
                 <h3 className="subhead" style={{ marginTop: 0 }}>Needs your attention</h3>
@@ -496,6 +554,11 @@ function Style() {
       .tdone .tdot{background:var(--mint);}
       .mt{margin-top:16px;}
       .rail{display:flex;flex-direction:column;gap:8px;margin-top:16px;}
+      .costcompare2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;}
+      .costopt{border:1.5px solid var(--line);border-radius:12px;padding:14px;text-align:center;background:#fff;cursor:pointer;}
+      .costopt:hover{border-color:var(--brand);}
+      .costopt .costlabel{font-size:11.5px;color:var(--sub);font-weight:600;text-transform:uppercase;letter-spacing:.03em;}
+      .costopt .costvalue{font-family:var(--fd);font-size:20px;font-weight:700;color:var(--ink);margin-top:4px;}
       .railstep{padding:10px 14px;border-radius:10px;background:var(--bg);font-size:13px;color:var(--sub);}
       .railstep.current{background:var(--brand-tint);color:var(--brand-dark);font-weight:700;}
       .railstep.done{color:var(--mint);}

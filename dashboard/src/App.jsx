@@ -5,16 +5,28 @@ const STAGE_LABELS = {
   intake: "Intake & Consent",
   safety_check: "Safety / Completeness",
   telehealth: "Telehealth Visit",
-  insurance_pa: "Insurance Prior Auth",
   pharmacy: "Pharmacy Fulfillment",
-  logistics: "Logistics / Delivery",
   refill: "Adherence & Refill",
 };
 const STAGE_ORDER = Object.keys(STAGE_LABELS);
 
+// Pharmacy sub-status shown alongside the stage name, since PA/payment/
+// dispense/ship all happen inside "pharmacy" now rather than as separate
+// top-level stages.
+const PHARMACY_STATUS_LABELS = {
+  prescription_received: "prescription received",
+  payment_pending: "awaiting payment",
+  insurance_pa_pending: "PA pending",
+  payment_received: "payment received",
+  insurance_approved: "insurance approved",
+  dispensed: "dispensed",
+  in_transit: "in transit",
+  delivered: "delivered",
+};
+
 // Stages that now belong to their own partner console — the pharma
 // dashboard shows a status note instead of a "Simulate next" button.
-const CONSOLE_OWNED_STAGES = { insurance_pa: "Awaiting payer", telehealth: "Awaiting telehealth", pharmacy: "Awaiting pharmacy" };
+const CONSOLE_OWNED_STAGES = { telehealth: "Awaiting telehealth", pharmacy: "In pharmacy fulfillment" };
 
 export default function App() {
   const [journeys, setJourneys] = useState([]);
@@ -138,7 +150,7 @@ export default function App() {
                   {filtered.map((j) => (
                     <tr key={j.journey_id} className={selectedId === j.journey_id ? "selected" : ""} onClick={() => loadDetail(j.journey_id)}>
                       <td className="mono">{j.patient_ref}</td>
-                      <td>{STAGE_LABELS[j.current_stage] || j.current_stage}</td>
+                      <td>{STAGE_LABELS[j.current_stage] || j.current_stage}{j.current_stage === "pharmacy" && j.pharmacy_status ? <span className="dim" style={{ fontSize: 10.5 }}><br />{PHARMACY_STATUS_LABELS[j.pharmacy_status] || j.pharmacy_status}</span> : null}</td>
                       <td>
                         <span className={"badge " + (j.is_breached ? "b-breach" : j.status === "completed" ? "b-done" : "b-ok")}>
                           {j.status === "completed" ? "Completed" : j.is_breached ? "Breached" : "On time"}
@@ -185,14 +197,14 @@ function JourneyDetail({ detail, onResolve, onSimulate }) {
         <h3 className="mono">{j.patient_ref}</h3>
         <span className={"badge " + (j.is_breached ? "b-breach" : "b-ok")}>{j.is_breached ? "Past SLA" : "On time"}</span>
       </div>
-      <p className="small">Current stage: <strong>{STAGE_LABELS[j.current_stage] || j.current_stage}</strong></p>
+      <p className="small">Current stage: <strong>{STAGE_LABELS[j.current_stage] || j.current_stage}</strong>{j.current_stage === "pharmacy" && j.pharmacy_status ? ` — ${PHARMACY_STATUS_LABELS[j.pharmacy_status] || j.pharmacy_status}` : ""}</p>
       <p className="small">SLA due: <span className="mono">{j.sla_due_at ? new Date(j.sla_due_at).toLocaleString() : "—"}</span></p>
 
       {j.status === "in_progress" && !CONSOLE_OWNED_STAGES[j.current_stage] && (
         <button className="btn primary" onClick={() => onSimulate(j.journey_id)}>Simulate partner response ▸</button>
       )}
       {j.status === "in_progress" && CONSOLE_OWNED_STAGES[j.current_stage] && (
-        <p className="small" style={{ color: "var(--cyan)" }}>Waiting on {j.current_stage === "insurance_pa" ? "the payer" : j.current_stage === "telehealth" ? "the telehealth partner" : "the pharmacy"} — this stage is handled in that partner's own console, not here.</p>
+        <p className="small" style={{ color: "var(--cyan)" }}>Waiting on {j.current_stage === "telehealth" ? "the telehealth partner" : "the pharmacy"} — this stage is handled in that partner's own console, not here.</p>
       )}
 
       <h4 className="sectionhead">Stage history</h4>

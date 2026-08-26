@@ -1,7 +1,6 @@
 import { Router } from "express";
 import { supabase } from "../db.js";
 import { appendAudit } from "../hash.js";
-import { STAGES, nextStage, dueAt } from "../workflow.js";
 
 export const eligibilityRouter = Router();
 
@@ -15,7 +14,10 @@ function checkSharedSecret(req, res, next) {
   next();
 }
 
-// POST /api/journeys/:id/eligibility-decision
+// POST /api/journeys/:id/eligibility-decision — updates pharmacy_status
+// only. The journey's current_stage stays "pharmacy" throughout this
+// whole sub-flow; PA approval/denial is a pharmacy-internal state change,
+// not a stage transition.
 eligibilityRouter.post("/:id/eligibility-decision", checkSharedSecret, async (req, res) => {
   const { id } = req.params;
   const { status, decision } = req.body || {}; // status: "approved" | "denied"
@@ -26,12 +28,13 @@ eligibilityRouter.post("/:id/eligibility-decision", checkSharedSecret, async (re
   await appendAudit({
     journeyId: id,
     actor: "payer-simulator",
-    decision: `eligibility ${status}${decision?.planName ? ` — ${decision.planName}` : ""}`,
+    decision: `prior authorization ${status}${decision?.planName ? ` — ${decision.planName}` : ""}`,
     fieldsShared: "coverage status, benefit tier only",
     consentBasis: "treatment",
   });
 
   if (status === "denied") {
+    await supabase.from("journeys").update({ pharmacy_status: "insurance_pa_pending" }).eq("id", id);
     await supabase.from("tasks").insert({
       journey_id: id,
       type: "Prior authorization denied",
@@ -42,24 +45,6 @@ eligibilityRouter.post("/:id/eligibility-decision", checkSharedSecret, async (re
     return res.json({ ok: true, held: true });
   }
 
-  // Approved — close out insurance_pa stage and advance, same shape as
-  // the "simulate-next" flow uses elsewhere.
-  const now = new Date();
-  const enteredAt = new Date(journey.stage_entered_at);
-  await supabase.from("stage_history").insert({
-    journey_id: id, stage: journey.current_stage, entered_at: journey.stage_entered_at,
-    exited_at: now.toISOString(), duration_hours: +((now - enteredAt) / 3600000).toFixed(2),
-  });
-
-  const next = nextStage(journey.current_stage) || STAGES[STAGES.length - 1];
-  await supabase.from("journeys").update({
-    current_stage: next.key, status: "in_progress",
-    stage_entered_at: now.toISOString(),
-    sla_due_at: dueAt(now, next.slaHours),
-    updated_at: now.toISOString(),
-  }).eq("id", id);
-
-  await supabase.from("journey_events").insert({ journey_id: id, event_type: "eligibility_approved", payload: {} });
-
-  res.json({ ok: true, held: false, stage: next.key });
+  await supabase.from("journeys").update({ pharmacy_status: "insurance_approved", updated_at: new Date().toISOString() }).eq("id", id);
+  res.json({ ok: true, held: false, pharmacyStatus: "insurance_approved" });
 });

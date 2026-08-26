@@ -178,7 +178,7 @@ intakeRouter.post("/", async (req, res) => {
   // since a real PA review needs the diagnosis and medical necessity
   // rationale that only exists once telehealth has happened.
   const nextEntered = new Date();
-  const next = nextStage("safety_check", { skipInsurance: billingMethod === "direct" });
+  const next = nextStage("safety_check"); // telehealth — insurance vs. cash is now decided later, once a drug and its price exist
   await supabase.from("journeys").update({
     current_stage: next.key,
     status: "in_progress",

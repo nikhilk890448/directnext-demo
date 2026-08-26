@@ -15,3 +15,9 @@ async function req(path, opts) {
 export const submitIntake = (payload) => req("/api/intake", { method: "POST", body: JSON.stringify(payload) });
 export const login = (email, password) => req("/api/patient/login", { method: "POST", body: JSON.stringify({ email, password }) });
 export const fetchMe = (token) => req("/api/patient/me", { headers: { Authorization: `Bearer ${token}` } });
+export const choosePaymentMethod = (token, method) => req("/api/patient/fill-payment-choice", {
+  method: "POST", headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ method }),
+});
+export const payNow = (token, paymentRequestId) => req("/api/patient/pay", {
+  method: "POST", headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ paymentRequestId }),
+});

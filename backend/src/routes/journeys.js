@@ -50,20 +50,19 @@ journeysRouter.post("/:id/tasks/:taskId/resolve", async (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/journeys/:id/simulate-next — DEMO ONLY, and now only for the
-// stages that don't yet have their own partner console (logistics/delivery,
-// refill/adherence). telehealth, insurance_pa, and pharmacy all moved to
-// their own dedicated consoles — the pharma dashboard shouldn't be the
-// place any partner's decision or work actually happens.
+// POST /api/journeys/:id/simulate-next — DEMO ONLY, and now only for
+// stages without their own partner console (currently just refill/
+// adherence). telehealth and pharmacy both moved to their own dedicated
+// consoles — the pharma dashboard shouldn't be the place any partner's
+// decision or work actually happens.
 journeysRouter.post("/:id/simulate-next", async (req, res) => {
   const { id } = req.params;
   const { data: journey } = await supabase.from("journeys").select("*, patients(*)").eq("id", id).maybeSingle();
   if (!journey) return res.status(404).json({ ok: false, error: "not found" });
 
   const CONSOLE_OWNED = {
-    insurance_pa: "This journey is waiting on the payer. Check the payer console to review or decide it — it doesn't advance from this dashboard.",
     telehealth: "This journey is waiting on the telehealth partner. Check the telehealth console to complete the visit — it doesn't advance from this dashboard.",
-    pharmacy: "This journey is waiting on the pharmacy. Check the pharmacy console to mark it dispensed — it doesn't advance from this dashboard.",
+    pharmacy: "This journey is waiting on the pharmacy. Check the pharmacy console — prior auth, payment, dispensing, and shipping all happen there now, not from this dashboard.",
   };
   if (CONSOLE_OWNED[journey.current_stage]) {
     return res.status(409).json({ ok: false, error: "not_simulable_here", message: CONSOLE_OWNED[journey.current_stage] });
@@ -84,8 +83,7 @@ journeysRouter.post("/:id/simulate-next", async (req, res) => {
     await appendAudit({ journeyId: id, actor: "agent:adherence", decision: `adherence score computed: ${adherence.result?.score ?? "n/a"}`, fieldsShared: "score only" });
   }
 
-  const skipInsurance = patient.billing_method === "direct";
-  const next = nextStage(journey.current_stage, { skipInsurance });
+  const next = nextStage(journey.current_stage);
 
   const status = next ? "in_progress" : "completed";
   const stageKey = next ? next.key : journey.current_stage;

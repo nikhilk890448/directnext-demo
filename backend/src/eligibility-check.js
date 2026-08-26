@@ -1,33 +1,32 @@
 import { supabase } from "./db.js";
 import { appendAudit } from "./hash.js";
-import { STAGES, nextStage, dueAt } from "./workflow.js";
 
 /**
- * Fires the prior-authorization request to the payer-simulator. Called the
- * moment a journey's stage becomes insurance_pa (from journeys.js, right
- * after the telehealth stage closes out and a clinical summary exists).
+ * Fires a prior-authorization request to the payer-simulator. Now called
+ * from the PHARMACY console ("Initiate PA"), once the patient has chosen
+ * the insurance path for a specific fill — not automatically after
+ * telehealth. This matches how PA actually works: the pharmacy submits
+ * the claim/PA at the point of dispensing, using the clinical
+ * justification the clinician already documented at the visit.
  *
- * Unlike a bare 270 eligibility check (coverage/demographic matching only),
- * a real prior authorization needs clinical justification — diagnosis and
- * medical necessity — which is why this only fires post-telehealth and why
- * the payload includes `clinical`. Sharing that with the payer for a
- * coverage determination is a treatment/payment purpose under HIPAA and
- * doesn't need special authorization beyond the standard consent already
- * captured at intake — it's a different boundary than the pharma-facing
- * dashboard, which stays PHI-free because the pharma company has no
- * equivalent need-to-know.
+ * Unlike a bare 270 eligibility check (coverage/demographic matching
+ * only), this includes `clinical` — diagnosis and medical necessity — the
+ * same "share with the payer for a coverage determination is a
+ * treatment/payment purpose under HIPAA" reasoning as before. Updates
+ * journeys.pharmacy_status directly; never touches current_stage, since
+ * the journey stays at "pharmacy" throughout this whole sub-flow.
  */
 export async function runEligibilityCheck({ journey, patient }) {
-  if (!patient.insurance) {
+  const ins = patient.insurance;
+  if (!ins) {
     await supabase.from("tasks").insert({
-      journey_id: journey.id, type: "No insurance on file", reason: "No insurance provided at intake — route to patient assistance program",
+      journey_id: journey.id, type: "No insurance on file", reason: "Insurance path chosen but no insurance on file — route to cash-pay instead",
       priority: "high", assigned_role: "Access & Benefits",
     });
-    await appendAudit({ journeyId: journey.id, actor: "rule:G4", decision: "insurance_pa held — no insurance on file", fieldsShared: "—" });
-    return { stage: "insurance_pa", held: true };
+    await appendAudit({ journeyId: journey.id, actor: "rule:pharmacy-pa", decision: "PA not submitted — no insurance on file", fieldsShared: "—" });
+    return { pharmacyStatus: "insurance_pa_pending", held: true };
   }
 
-  const ins = patient.insurance;
   const isSelf = (ins.relationship_to_subscriber || "self") === "self";
   const clinical = journey.clinical_summary || {};
   const payload = {
@@ -47,7 +46,7 @@ export async function runEligibilityCheck({ journey, patient }) {
     clinical: {
       diagnosisCode: clinical.diagnosisCode || null,
       diagnosisLabel: clinical.diagnosisLabel || patient.condition,
-      prescribedTherapy: clinical.prescribedTherapy || null,
+      prescribedTherapy: journey.prescription?.drugName || null,
       medicalNecessity: clinical.medicalNecessity || null,
       clinicianName: clinical.clinicianName || null,
       visitDate: clinical.visitDate || null,
@@ -63,50 +62,39 @@ export async function runEligibilityCheck({ journey, patient }) {
     });
     elig = await resp.json();
   } catch (e) {
-    await appendAudit({ journeyId: journey.id, actor: "gateway", decision: "payer-simulator unreachable — held for retry", fieldsShared: "—" });
+    await appendAudit({ journeyId: journey.id, actor: "gateway", decision: "payer-simulator unreachable — PA held for retry", fieldsShared: "—" });
     await supabase.from("tasks").insert({
-      journey_id: journey.id, type: "Eligibility check failed", reason: "Could not reach the payer service — will need a retry",
+      journey_id: journey.id, type: "PA submission failed", reason: "Could not reach the payer service — will need a retry",
       priority: "high", assigned_role: "Access & Benefits",
     });
-    return { stage: "insurance_pa", held: true };
+    return { pharmacyStatus: "insurance_pa_pending", held: true };
   }
 
   await appendAudit({ journeyId: journey.id, actor: "payer-simulator", decision: `prior auth request: ${elig.status}`, fieldsShared: "coverage status + clinical summary" });
 
   if (elig.status === "needs_info") {
     await supabase.from("tasks").insert({
-      journey_id: journey.id, type: "Prior auth request incomplete",
+      journey_id: journey.id, type: "PA submission incomplete",
       reason: `Payer could not process — missing: ${(elig.missingFields || []).join(", ")}`,
       priority: "high", assigned_role: "Access & Benefits",
     });
-    return { stage: "insurance_pa", held: true };
+    return { pharmacyStatus: "insurance_pa_pending", held: true };
   }
   if (elig.status === "auto_denied") {
     await supabase.from("tasks").insert({
       journey_id: journey.id, type: "Prior authorization denied", reason: elig.decision?.reason || "Payer denied coverage",
       priority: "high", assigned_role: "Access & Benefits",
     });
-    return { stage: "insurance_pa", held: true };
+    return { pharmacyStatus: "insurance_pa_pending", held: true };
   }
   if (elig.status === "pending_review") {
-    await supabase.from("tasks").insert({
-      journey_id: journey.id, type: "Awaiting payer review", reason: "Prior auth needs clinical review — a payer reviewer must decide",
-      priority: "medium", assigned_role: "Access & Benefits",
-    });
-    return { stage: "insurance_pa", held: true, pendingExternalReview: true };
+    // The normal case now — every complete PA request goes to manual
+    // review in the payer console (see payer-simulator/src/index.js).
+    return { pharmacyStatus: "insurance_pa_pending", held: true, pendingExternalReview: true };
   }
 
-  // auto_approved — advance to the next stage right away.
-  const advanced = new Date();
-  const next = nextStage("insurance_pa"); // always pharmacy from here, regardless of billing method
-  await supabase.from("journeys").update({
-    current_stage: next.key, status: "in_progress",
-    stage_entered_at: advanced.toISOString(),
-    sla_due_at: dueAt(advanced, next.slaHours),
-    updated_at: advanced.toISOString(),
-  }).eq("id", journey.id);
-  await supabase.from("journey_events").insert({ journey_id: journey.id, event_type: "prior_auth_approved", payload: {} });
-  await appendAudit({ journeyId: journey.id, actor: "payer-simulator", decision: `prior auth approved — advanced to ${next.key}`, fieldsShared: "—" });
-
-  return { stage: next.key, held: false };
+  // auto_approved (rare — payer-simulator no longer auto-adjudicates, kept
+  // for robustness in case that changes) — mark approved directly.
+  await appendAudit({ journeyId: journey.id, actor: "payer-simulator", decision: "prior auth approved", fieldsShared: "—" });
+  return { pharmacyStatus: "insurance_approved", held: false };
 }

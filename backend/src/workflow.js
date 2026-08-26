@@ -1,18 +1,17 @@
 // The declarative shape of the program — one array, everything else reads it.
 //
-// Order note: insurance_pa sits AFTER telehealth. A prior authorization
-// review needs the clinician's diagnosis and medical necessity rationale —
-// that only exists once the telehealth visit has happened. This is
-// different from a bare eligibility/coverage check (which only needs
-// demographic + policy matching and could run earlier); this program models
-// the fuller prior-auth process, so it waits for the clinical note.
+// insurance_pa and logistics are no longer separate top-level stages. Both
+// are now sub-statuses inside "pharmacy" (journeys.pharmacy_status):
+// prescription_received → payment_pending/insurance_pa_pending →
+// payment_received/insurance_approved → dispensed → in_transit → delivered.
+// This matches how prior authorization and shipping actually happen in
+// practice — pharmacy-initiated, not automatic upstream gates — and is
+// what lets the pharmacy console own the whole fulfillment lifecycle.
 export const STAGES = [
   { key: "intake", label: "Intake & Consent", slaHours: 24, owner: "Patient Services" },
   { key: "safety_check", label: "Safety / Completeness Check", slaHours: 4, owner: "Governance" },
   { key: "telehealth", label: "Telehealth Visit", slaHours: 48, owner: "Independent Clinician" },
-  { key: "insurance_pa", label: "Insurance Prior Authorization", slaHours: 72, owner: "Access & Benefits" },
-  { key: "pharmacy", label: "Pharmacy Fulfillment", slaHours: 24, owner: "Fulfilment" },
-  { key: "logistics", label: "Logistics / Delivery", slaHours: 48, owner: "Fulfilment" },
+  { key: "pharmacy", label: "Pharmacy Fulfillment", slaHours: 96, owner: "Fulfilment" },
   { key: "refill", label: "Adherence & Refill", slaHours: 720, owner: "Care Team" },
 ];
 
@@ -20,19 +19,10 @@ export function stageIndex(key) {
   return STAGES.findIndex((s) => s.key === key);
 }
 
-/**
- * Next stage after `key`. Pass { skipInsurance: true } for patients who
- * chose to self-pay at intake — their journey never touches insurance_pa.
- */
-export function nextStage(key, { skipInsurance = false } = {}) {
-  let i = stageIndex(key);
-  if (i === -1) return null;
-  i++;
-  while (i < STAGES.length) {
-    if (skipInsurance && STAGES[i].key === "insurance_pa") { i++; continue; }
-    return STAGES[i];
-  }
-  return null;
+export function nextStage(key) {
+  const i = stageIndex(key);
+  if (i === -1 || i === STAGES.length - 1) return null;
+  return STAGES[i + 1];
 }
 
 export function slaHoursFor(key) {

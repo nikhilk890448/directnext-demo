@@ -9,19 +9,19 @@ export const FIELD_CONTRACTS = {
   // The pharma workflow dashboard: stage/timing/status only, never PHI.
   dashboard: ["patient_ref", "current_stage", "status", "stage_entered_at", "sla_due_at", "is_breached"],
 
-  // The independent telehealth network. Clinical fields only — explicitly
-  // NO insurance/payer information. This is the routing/prescribing
-  // firewall: a clinician deciding treatment must not see which payer is
-  // involved or what it might reimburse, to keep the visit's outcome
-  // uncorrelated with coverage economics.
-  telehealth: ["patient_ref", "condition", "narrative", "preferred_contact"],
+  // The independent telehealth network. Full clinical identity — a
+  // clinician needs the patient's real name and DOB to conduct a valid
+  // visit and write a valid prescription. What's still deliberately
+  // excluded is insurance/payer information — that's the actual firewall:
+  // a clinician's decision shouldn't correlate with what a payer might
+  // reimburse, not that the clinician shouldn't know who the patient is.
+  telehealth: ["patient_ref", "first_name", "last_name", "dob", "condition", "narrative", "preferred_contact"],
 
-  // The dispensing pharmacy. Fulfillment fields only — no diagnosis, no
-  // narrative, no insurance detail. Just what's needed to ship the
-  // prescribed therapy to the right place.
-  pharmacy: ["patient_ref", "shipping_address", "prescription"],
-
-  logistics: ["patient_ref", "shipping_address"],
+  // The dispensing pharmacy. Fulfillment fields only — the prescription
+  // itself (drug/sig/quantity, not diagnosis), shipping address, and
+  // payment-path status. No diagnosis, no narrative, no insurance member
+  // detail beyond what's needed to route a PA request.
+  pharmacy: ["patient_ref", "shipping_address", "prescription", "pharmacy_status", "fill_payment_method"],
 };
 
 export function scopeFields(role, record) {
