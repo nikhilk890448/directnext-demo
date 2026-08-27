@@ -16,6 +16,7 @@ export const api = {
   getJourney: (id) => req(`/api/journeys/${id}`),
   getAudit: (id) => req(`/api/journeys/${id}/audit`),
   simulateNext: (id) => req(`/api/journeys/${id}/simulate-next`, { method: "POST" }),
+  remind: (id) => req(`/api/journeys/${id}/remind`, { method: "POST" }),
   resolveTask: (journeyId, taskId) => req(`/api/journeys/${journeyId}/tasks/${taskId}/resolve`, { method: "POST" }),
   listAgents: () => req("/api/agents"),
   toggleAgent: (id) => req(`/api/agents/${id}/toggle`, { method: "POST" }),

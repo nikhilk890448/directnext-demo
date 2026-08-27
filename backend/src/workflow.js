@@ -17,8 +17,13 @@
 // "safety_check" stage that no code path ever actually assigned to a
 // journey — a dead stage that just confused the dashboard's funnel view.
 export const STAGES = [
-  { key: "intake", label: "Intake & Consent", slaHours: 24, owner: "Patient Services" },
-  { key: "telehealth", label: "Telehealth Visit", slaHours: 48, owner: "Independent Clinician" },
+  // 3 minutes — intake is synchronous (A01+A03 both evaluate within the
+  // same request), so this SLA only matters for the rare case where a
+  // journey is stuck holding on a task and nobody's looked at it yet.
+  { key: "intake", label: "Intake & Consent", slaHours: 3 / 60, owner: "Patient Services" },
+  // Upper bound of the stated 1–2 hour target — the SLA is the point a
+  // wait becomes a breach, not the expected/typical time.
+  { key: "telehealth", label: "Telehealth Visit", slaHours: 2, owner: "Independent Clinician" },
   { key: "pharmacy", label: "Pharmacy Fulfillment", slaHours: 96, owner: "Fulfilment" },
   { key: "refill", label: "Adherence & Refill", slaHours: 720, owner: "Care Team" },
 ];

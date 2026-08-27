@@ -86,7 +86,22 @@ export default function App() {
   const filtered = filterStage === "all" ? journeys : journeys.filter((j) => j.current_stage === filterStage);
 
   async function handleSimulate(id) {
-    await api.simulateNext(id);
+    try {
+      await api.simulateNext(id);
+      setErr(null);
+    } catch (e) {
+      setErr(e.data?.message || `Couldn't advance that journey (${e.data?.error || e.message}).`);
+    }
+    await refresh();
+    if (selectedId === id) await loadDetail(id);
+  }
+  async function handleRemind(id) {
+    try {
+      await api.remind(id);
+      setErr(null);
+    } catch (e) {
+      setErr(e.data?.message || `Couldn't send the reminder (${e.data?.error || e.message}).`);
+    }
     await refresh();
     if (selectedId === id) await loadDetail(id);
   }
@@ -143,31 +158,35 @@ export default function App() {
             <div className="listcol">
               <table className="jtable">
                 <thead>
-                  <tr><th>Patient ref</th><th>Stage</th><th>SLA</th><th></th></tr>
+                  <tr><th>Patient ref</th><th>Stage</th><th>Sub-status</th><th>SLA</th><th></th></tr>
                 </thead>
                 <tbody>
-                  {filtered.map((j) => (
+                  {filtered.map((j) => {
+                    const consoleOwned = !!CONSOLE_OWNED_STAGES[j.current_stage];
+                    return (
                     <tr key={j.journey_id} className={selectedId === j.journey_id ? "selected" : ""} onClick={() => loadDetail(j.journey_id)}>
                       <td className="mono">{j.patient_ref}</td>
-                      <td>{STAGE_LABELS[j.current_stage] || j.current_stage}{j.current_stage === "pharmacy" && j.pharmacy_status ? <span className="dim" style={{ fontSize: 10.5 }}><br />{PHARMACY_STATUS_LABELS[j.pharmacy_status] || j.pharmacy_status}</span> : null}</td>
+                      <td>{STAGE_LABELS[j.current_stage] || j.current_stage}</td>
+                      <td className="dim">{j.current_stage === "pharmacy" && j.pharmacy_status ? (PHARMACY_STATUS_LABELS[j.pharmacy_status] || j.pharmacy_status) : "—"}</td>
                       <td>
                         <span className={"badge " + (j.is_breached ? "b-breach" : j.status === "completed" ? "b-done" : "b-ok")}>
                           {j.status === "completed" ? "Completed" : j.is_breached ? "Breached" : "On time"}
                         </span>
                       </td>
                       <td>
-                        {j.status === "in_progress" && !CONSOLE_OWNED_STAGES[j.current_stage] && (
-                          <button className="minibtn" onClick={(e) => { e.stopPropagation(); handleSimulate(j.journey_id); }}>
-                            Simulate next ▸
+                        {j.status === "in_progress" && (
+                          <button
+                            className="minibtn"
+                            onClick={(e) => { e.stopPropagation(); consoleOwned ? handleRemind(j.journey_id) : handleSimulate(j.journey_id); }}
+                          >
+                            Simulate / remind partner ▸
                           </button>
-                        )}
-                        {j.status === "in_progress" && CONSOLE_OWNED_STAGES[j.current_stage] && (
-                          <span className="dim" style={{ fontSize: 11 }}>{CONSOLE_OWNED_STAGES[j.current_stage]}</span>
                         )}
                       </td>
                     </tr>
-                  ))}
-                  {filtered.length === 0 && <tr><td colSpan={4} className="empty">No journeys in this stage.</td></tr>}
+                    );
+                  })}
+                  {filtered.length === 0 && <tr><td colSpan={5} className="empty">No journeys in this stage.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -175,7 +194,7 @@ export default function App() {
             <div className="detailcol">
               {!detail && <div className="empty card">Select a journey to see where that patient is right now.</div>}
               {detail && (
-                <JourneyDetail detail={detail} onResolve={handleResolve} onSimulate={handleSimulate} />
+                <JourneyDetail detail={detail} onResolve={handleResolve} onSimulate={handleSimulate} onRemind={handleRemind} />
               )}
             </div>
           </div>
@@ -187,9 +206,11 @@ export default function App() {
   );
 }
 
-function JourneyDetail({ detail, onResolve, onSimulate }) {
+function JourneyDetail({ detail, onResolve, onSimulate, onRemind }) {
   const j = detail.journey;
   const openTasks = (detail.tasks || []).filter((t) => t.status === "open");
+  const consoleOwned = !!CONSOLE_OWNED_STAGES[j.current_stage];
+  const blocked = openTasks.length > 0 && !consoleOwned;
   return (
     <div className="card">
       <div className="spread">
@@ -199,11 +220,19 @@ function JourneyDetail({ detail, onResolve, onSimulate }) {
       <p className="small">Current stage: <strong>{STAGE_LABELS[j.current_stage] || j.current_stage}</strong>{j.current_stage === "pharmacy" && j.pharmacy_status ? ` — ${PHARMACY_STATUS_LABELS[j.pharmacy_status] || j.pharmacy_status}` : ""}</p>
       <p className="small">SLA due: <span className="mono">{j.sla_due_at ? new Date(j.sla_due_at).toLocaleString() : "—"}</span></p>
 
-      {j.status === "in_progress" && !CONSOLE_OWNED_STAGES[j.current_stage] && (
-        <button className="btn primary" onClick={() => onSimulate(j.journey_id)}>Simulate partner response ▸</button>
+      {consoleOwned && (
+        <p className="small" style={{ color: "var(--cyan)" }}>Waiting on {j.current_stage === "telehealth" ? "the telehealth partner" : "the pharmacy"} — the actual decision happens in their own console. This button only sends a reminder, it can't advance the journey.</p>
       )}
-      {j.status === "in_progress" && CONSOLE_OWNED_STAGES[j.current_stage] && (
-        <p className="small" style={{ color: "var(--cyan)" }}>Waiting on {j.current_stage === "telehealth" ? "the telehealth partner" : "the pharmacy"} — this stage is handled in that partner's own console, not here.</p>
+      {blocked && (
+        <p className="small" style={{ color: "var(--amber)" }}>Blocked by an open task below — resolve it before this journey can advance.</p>
+      )}
+      {j.status === "in_progress" && !blocked && (
+        <button
+          className="btn primary"
+          onClick={() => (consoleOwned ? onRemind(j.journey_id) : onSimulate(j.journey_id))}
+        >
+          Simulate / remind partner ▸
+        </button>
       )}
 
       <h4 className="sectionhead">Stage history</h4>

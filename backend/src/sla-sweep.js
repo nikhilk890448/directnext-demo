@@ -36,7 +36,7 @@ export async function slaSweep() {
   }
 }
 
-export function startSlaSweep(intervalMs = 5 * 60 * 1000) {
+export function startSlaSweep(intervalMs = 60 * 1000) {
   slaSweep();
   return setInterval(slaSweep, intervalMs);
 }

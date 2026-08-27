@@ -50,6 +50,23 @@ journeysRouter.post("/:id/tasks/:taskId/resolve", async (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/journeys/:id/remind — a non-destructive nudge, available for
+// EVERY stage regardless of who owns it. Unlike simulate-next, this never
+// changes any state — it only logs that a human asked for a status check/
+// reminder. Safe to expose everywhere, including console-owned stages,
+// since it can't be used to bypass a partner's actual decision.
+journeysRouter.post("/:id/remind", async (req, res) => {
+  const { id } = req.params;
+  const { data: journey } = await supabase.from("journeys").select("current_stage, pharmacy_status").eq("id", id).maybeSingle();
+  if (!journey) return res.status(404).json({ ok: false, error: "not found" });
+
+  const label = journey.current_stage === "pharmacy" && journey.pharmacy_status
+    ? `${journey.current_stage} (${journey.pharmacy_status})`
+    : journey.current_stage;
+  await appendAudit({ journeyId: id, actor: "human:dashboard", decision: `manual reminder sent to partner for ${label}`, fieldsShared: "—" });
+  res.json({ ok: true });
+});
+
 // POST /api/journeys/:id/simulate-next — DEMO ONLY, and now only for
 // stages without their own partner console (currently just refill/
 // adherence). telehealth and pharmacy both moved to their own dedicated
@@ -59,6 +76,14 @@ journeysRouter.post("/:id/simulate-next", async (req, res) => {
   const { id } = req.params;
   const { data: journey } = await supabase.from("journeys").select("*, patients(*)").eq("id", id).maybeSingle();
   if (!journey) return res.status(404).json({ ok: false, error: "not found" });
+
+  // Never let this bypass an open hold — e.g. a journey sitting at
+  // "intake" because A03 flagged it. Simulate-next used to have no such
+  // guard and could silently advance a held journey around its own gate.
+  const { data: openTasks } = await supabase.from("tasks").select("id").eq("journey_id", id).eq("status", "open").limit(1);
+  if (openTasks && openTasks.length > 0) {
+    return res.status(409).json({ ok: false, error: "blocked_by_open_task", message: "This journey has an open task holding it — resolve it in Exceptions before advancing." });
+  }
 
   const CONSOLE_OWNED = {
     telehealth: "This journey is waiting on the telehealth partner. Check the telehealth console to complete the visit — it doesn't advance from this dashboard.",

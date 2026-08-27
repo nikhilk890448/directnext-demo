@@ -34,33 +34,12 @@ function findMissing(payload) {
   return REQUIRED.filter(([, get]) => !get(payload)).map(([label]) => label);
 }
 
-function hashToUnit(str) {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
-  return (h % 1000) / 1000;
-}
-
-const PLANS = ["Bronze Advantage", "Silver Select", "Gold Choice PPO", "Platinum Complete"];
-
-function adjudicate(payload) {
-  const seed = hashToUnit((payload.payerId || "") + (payload.subscriber?.memberId || "") + payload.requestId);
-  if (seed < 0.15) return { outcome: "pending_review" };
-  if (seed < 0.30) {
-    return {
-      outcome: "auto_denied",
-      decision: { reason: seed < 0.22 ? "Prior authorization required and not on file" : "Therapy not covered under this plan tier" },
-    };
-  }
-  return {
-    outcome: "auto_approved",
-    decision: {
-      planName: PLANS[Math.floor(seed * PLANS.length)],
-      copay: Math.round(10 + seed * 60),
-      coinsurance: Math.round(seed * 20),
-      deductibleRemaining: Math.round(seed * 2000),
-      priorAuthRequired: false,
-    },
-  };
+// Every complete request goes to manual review — no automatic approve/deny.
+// The only thing decided automatically is whether the request is even
+// processable (missing required fields), which is a data-completeness
+// check, not a coverage decision.
+function adjudicate(_payload) {
+  return { outcome: "pending_review" };
 }
 
 // POST /eligibility/inquiry — called by the main backend.
@@ -111,15 +90,26 @@ app.post("/api/requests/:id/decide", async (req, res) => {
     status: outcome, decision: decisionPayload, reviewed_by: "demo-reviewer", updated_at: new Date().toISOString(),
   });
 
+  let callbackRes;
   try {
-    await fetch(`${process.env.BACKEND_URL}/api/journeys/${row.journey_id}/eligibility-decision`, {
+    callbackRes = await fetch(`${process.env.BACKEND_URL}/api/journeys/${row.journey_id}/eligibility-decision`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Payer-Callback-Key": process.env.PAYER_CALLBACK_SECRET || "" },
       body: JSON.stringify({ status: outcome, decision: decisionPayload }),
     });
   } catch (e) {
-    console.error("callback to backend failed:", e.message);
+    console.error("callback to backend failed (network error):", e.message);
     return res.status(502).json({ ok: false, error: "decided locally but callback to backend failed", detail: e.message });
+  }
+
+  if (!callbackRes.ok) {
+    const body = await callbackRes.text().catch(() => "");
+    console.error("callback to backend rejected:", callbackRes.status, body);
+    return res.status(502).json({
+      ok: false,
+      error: "decided locally but backend rejected the callback",
+      detail: `backend responded ${callbackRes.status}: ${body}`,
+    });
   }
 
   res.json({ ok: true });

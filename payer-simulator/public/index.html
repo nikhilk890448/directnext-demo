@@ -173,11 +173,15 @@ function renderDetail() {
 
 async function decide(outcome) {
   const notes = document.getElementById("notes")?.value || "";
-  await fetch(`/api/requests/${selectedId}/decide`, {
+  const res = await fetch(`/api/requests/${selectedId}/decide`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision: outcome, notes }),
   });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(`Decided locally, but the pharmacy/backend was NOT updated: ${data.detail || data.error || res.status}`);
+  }
   await refresh();
 }
 
