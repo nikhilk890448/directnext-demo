@@ -2,10 +2,17 @@
 // to your deployed backend's URL, e.g. https://directnext-backend.onrender.com
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8080";
 
-async function req(path, opts) {
+async function req(path, opts = {}) {
+  // Merge headers instead of letting opts.headers replace the default
+  // entirely — otherwise any call that adds an Authorization header (like
+  // the ones below) silently loses Content-Type: application/json, and
+  // Express never parses the body at all. That was the actual bug behind
+  // "invalid_method": the body was never being read, not that a bad value
+  // was sent.
+  const { headers: extraHeaders, ...rest } = opts;
   const res = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...opts,
+    headers: { "Content-Type": "application/json", ...(extraHeaders || {}) },
+    ...rest,
   });
   const data = await res.json();
   if (!res.ok) throw Object.assign(new Error(data.error || "request_failed"), { data });
