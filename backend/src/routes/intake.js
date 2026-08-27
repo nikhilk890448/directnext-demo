@@ -178,7 +178,7 @@ intakeRouter.post("/", async (req, res) => {
   // since a real PA review needs the diagnosis and medical necessity
   // rationale that only exists once telehealth has happened.
   const nextEntered = new Date();
-  const next = nextStage("safety_check"); // telehealth — insurance vs. cash is now decided later, once a drug and its price exist
+  const next = nextStage("intake"); // telehealth — A01+A03 both already ran synchronously above, in this same request
   await supabase.from("journeys").update({
     current_stage: next.key,
     status: "in_progress",
@@ -187,7 +187,7 @@ intakeRouter.post("/", async (req, res) => {
     updated_at: nextEntered.toISOString(),
   }).eq("id", journey.id);
 
-  await supabase.from("journey_events").insert({ journey_id: journey.id, event_type: "gate_pass", payload: { gate: "safety_check" } });
+  await supabase.from("journey_events").insert({ journey_id: journey.id, event_type: "gate_pass", payload: { gate: "intake_gate" } });
   await appendAudit({ journeyId: journey.id, actor: "agent:guardrail", decision: `guardrail cleared — advanced to ${next.key}`, fieldsShared: "—" });
 
   res.status(201).json({ ok: true, patientRef: patient.patient_ref, journeyId: journey.id, stage: next.key, held: false });

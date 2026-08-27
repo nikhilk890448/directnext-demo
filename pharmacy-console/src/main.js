@@ -36,7 +36,7 @@ function renderTable() {
     tr.onclick = () => { selectedId = q.journeyId; renderTable(); loadDetail(q.journeyId); };
     const drug = q.prescription?.drugName || "—";
     tr.innerHTML = `
-      <td class="mono">${q.patient_ref}</td>
+      <td>${[q.first_name, q.last_name].filter(Boolean).join(" ") || q.patient_ref}</td>
       <td>${drug}</td>
       <td><span class="badge">${STATUS_LABELS[q.pharmacy_status] || q.pharmacy_status || "—"}</span></td>
       <td>${q.fill_payment_method || "—"}</td>
@@ -85,7 +85,8 @@ async function loadDetail(id) {
   `).join("");
 
   el.innerHTML = `
-    <h3>${p.patient_ref}</h3>
+    <h3>${[p.first_name, p.last_name].filter(Boolean).join(" ") || p.patient_ref}</h3>
+    <div class="kv"><span>Reference / DOB</span><span>${p.patient_ref} · ${p.dob || "—"}</span></div>
     <div class="kv"><span>Drug</span><span>${rx.drugName || "—"}</span></div>
     <div class="kv"><span>Strength / form</span><span>${[rx.strength, rx.form].filter(Boolean).join(" · ") || "—"}</span></div>
     <div class="kv"><span>SIG</span><span>${rx.sig || "—"}</span></div>

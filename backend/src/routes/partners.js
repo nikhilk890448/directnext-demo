@@ -24,6 +24,9 @@ function pharmacyView(patient, journey) {
   const shipping = [a.line, a.city, a.state, a.zip].filter(Boolean).join(", ");
   return scopeFields("pharmacy", {
     patient_ref: patient.patient_ref,
+    first_name: patient.first_name,
+    last_name: patient.last_name,
+    dob: patient.dob,
     shipping_address: shipping || null,
     prescription: journey.prescription || null,
     pharmacy_status: journey.pharmacy_status,

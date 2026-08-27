@@ -21,7 +21,7 @@ const RELATIONSHIPS = ["Self", "Spouse", "Child", "Other"];
 
 // Matches backend/src/workflow.js STAGES order exactly — used to compute
 // "how far along" a journey is without hardcoding stage-specific indices.
-const STAGE_KEYS = ["intake", "safety_check", "telehealth", "pharmacy", "refill"];
+const STAGE_KEYS = ["intake", "telehealth", "pharmacy", "refill"];
 
 const STEPS = ["Welcome", "About you", "Account", "Coverage", "Consent", "Review"];
 
@@ -328,7 +328,7 @@ function SelectField({ label, value, onChange, options, wide }) {
 }
 
 function Confirmation({ result, name, goLogin }) {
-  const stages = ["Intake received", "Safety check", "Telehealth visit", "Pharmacy & delivery", "Refills"];
+  const stages = ["Intake received", "Telehealth visit", "Pharmacy & delivery", "Refills"];
   const activeIdx = Math.max(0, STAGE_KEYS.indexOf(result.stage));
   return (
     <div className="wrap">
@@ -413,7 +413,7 @@ function PortalView({ onLogout }) {
   if (error) return <div className="wrap"><div className="card"><p>{error}</p><button className="btn primary" onClick={onLogout}>Back to login</button></div></div>;
   if (!data) return <div className="wrap"><p className="stepdesc">Loading…</p></div>;
 
-  const stages = ["Intake & Consent", "Safety / Completeness", "Telehealth Visit", "Pharmacy Fulfillment", "Adherence & Refill"];
+  const stages = ["Intake & Consent", "Telehealth Visit", "Pharmacy Fulfillment", "Adherence & Refill"];
   const currentIdx = data.stages.indexOf(data.journey?.currentStage);
   const j = data.journey;
   const PHARMACY_STATUS_LABELS = {

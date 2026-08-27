@@ -7,9 +7,17 @@
 // This matches how prior authorization and shipping actually happen in
 // practice — pharmacy-initiated, not automatic upstream gates — and is
 // what lets the pharmacy console own the whole fulfillment lifecycle.
+//
+// There is also no separate "safety_check" stage. A01 (eligibility gate)
+// and A03 (guardrail) both run synchronously inside the single POST
+// /api/intake request — there's no asynchronous waiting period between
+// them for a journey to visibly sit at. A journey either holds at "intake"
+// (A01 rejected before any record was created, or A03 held it after) or
+// advances straight to "telehealth". An earlier version of this file had a
+// "safety_check" stage that no code path ever actually assigned to a
+// journey — a dead stage that just confused the dashboard's funnel view.
 export const STAGES = [
   { key: "intake", label: "Intake & Consent", slaHours: 24, owner: "Patient Services" },
-  { key: "safety_check", label: "Safety / Completeness Check", slaHours: 4, owner: "Governance" },
   { key: "telehealth", label: "Telehealth Visit", slaHours: 48, owner: "Independent Clinician" },
   { key: "pharmacy", label: "Pharmacy Fulfillment", slaHours: 96, owner: "Fulfilment" },
   { key: "refill", label: "Adherence & Refill", slaHours: 720, owner: "Care Team" },

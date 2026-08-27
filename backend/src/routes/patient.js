@@ -1,8 +1,7 @@
 import { Router } from "express";
 import { authClient } from "../authClient.js";
 import { requirePatientAuth } from "../auth.js";
-import { restGet } from "../rest.js";
-import { supabase } from "../db.js";
+import { restGet, restInsert, restUpdate } from "../rest.js";
 import { appendAudit } from "../hash.js";
 import { STAGES } from "../workflow.js";
 
@@ -21,9 +20,6 @@ patientRouter.post("/login", async (req, res) => {
 // GET /api/patient/me — this is the ONE place the full, real patient record
 // (their own name, stage, tasks) is returned. It only works with a valid
 // token belonging to that exact patient, verified in requirePatientAuth.
-// Uses restGet (raw PostgREST calls) rather than supabase.from() — see the
-// comment in auth.js for why: the SDK query builder was unreliable for
-// this project, plain HTTP calls to the same endpoint work every time.
 patientRouter.get("/me", requirePatientAuth, async (req, res) => {
   const patient = req.patient;
 
@@ -78,6 +74,13 @@ patientRouter.get("/me", requirePatientAuth, async (req, res) => {
 // intake, before a drug was even chosen). Choosing cash immediately opens
 // a payment request; choosing insurance just records the choice — the
 // pharmacy is the one that actually submits the PA (see partners.js).
+//
+// Uses restUpdate/restInsert (raw PostgREST) rather than supabase.from() —
+// this route sits behind requirePatientAuth, the same request context
+// where the SDK's query builder was previously found to silently no-op
+// (see auth.js). A write that "succeeds" with 0 rows affected and no
+// thrown error is exactly how this bug hid — plain HTTP avoids it, and we
+// now check the result explicitly instead of assuming success.
 patientRouter.post("/fill-payment-choice", requirePatientAuth, async (req, res) => {
   const { method } = req.body || {};
   if (!["cash", "insurance"].includes(method)) return res.status(400).json({ ok: false, error: "invalid_method" });
@@ -89,16 +92,21 @@ patientRouter.post("/fill-payment-choice", requirePatientAuth, async (req, res) 
   }
 
   const update = { fill_payment_method: method, updated_at: new Date().toISOString() };
-  if (method === "cash") {
-    update.pharmacy_status = "payment_pending";
+  if (method === "cash") update.pharmacy_status = "payment_pending";
+
+  const upd = await restUpdate("journeys", `id=eq.${journey.id}`, update);
+  if (upd.status >= 400 || !Array.isArray(upd.data) || upd.data.length === 0) {
+    console.log("[fill-payment-choice] journeys update failed or affected 0 rows:", upd.status, upd.raw || upd.data);
+    return res.status(500).json({ ok: false, error: "update_failed" });
   }
-  await supabase.from("journeys").update(update).eq("id", journey.id);
+
   await appendAudit({ journeyId: journey.id, actor: "patient", decision: `chose ${method} for this fill`, fieldsShared: "payment method only", consentBasis: "consent" });
 
   if (method === "cash") {
     const { data: quotes } = await restGet(`pricing_quotes?journey_id=eq.${journey.id}&order=created_at.desc&limit=1&select=*`);
     const q = Array.isArray(quotes) && quotes.length ? quotes[0] : null;
-    await supabase.from("payment_requests").insert({ journey_id: journey.id, amount: q?.cash_price || 0, status: "pending" });
+    const ins = await restInsert("payment_requests", { journey_id: journey.id, amount: q?.cash_price || 0, status: "pending" });
+    if (ins.status >= 400) console.log("[fill-payment-choice] payment_requests insert failed:", ins.status, ins.raw || ins.data);
   }
 
   res.json({ ok: true });
@@ -114,8 +122,13 @@ patientRouter.post("/pay", requirePatientAuth, async (req, res) => {
   const pay = Array.isArray(payRows) && payRows.length ? payRows[0] : null;
   if (!pay) return res.status(404).json({ ok: false, error: "not found" });
 
-  await supabase.from("payment_requests").update({ status: "paid", paid_at: new Date().toISOString() }).eq("id", pay.id);
-  await supabase.from("journeys").update({ pharmacy_status: "payment_received", updated_at: new Date().toISOString() }).eq("id", pay.journey_id);
+  const upd1 = await restUpdate("payment_requests", `id=eq.${pay.id}`, { status: "paid", paid_at: new Date().toISOString() });
+  const upd2 = await restUpdate("journeys", `id=eq.${pay.journey_id}`, { pharmacy_status: "payment_received", updated_at: new Date().toISOString() });
+  if (upd1.status >= 400 || upd2.status >= 400) {
+    console.log("[pay] update failed:", upd1.status, upd2.status);
+    return res.status(500).json({ ok: false, error: "update_failed" });
+  }
+
   await appendAudit({ journeyId: pay.journey_id, actor: "patient", decision: "payment received (demo gateway — no real funds moved)", fieldsShared: "payment status only" });
 
   res.json({ ok: true });

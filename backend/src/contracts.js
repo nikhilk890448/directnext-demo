@@ -21,7 +21,12 @@ export const FIELD_CONTRACTS = {
   // itself (drug/sig/quantity, not diagnosis), shipping address, and
   // payment-path status. No diagnosis, no narrative, no insurance member
   // detail beyond what's needed to route a PA request.
-  pharmacy: ["patient_ref", "shipping_address", "prescription", "pharmacy_status", "fill_payment_method"],
+  // The dispensing pharmacy. Fulfillment fields plus real identity — a
+  // pharmacy legally needs the patient's name (and DOB, for the standard
+  // "two patient identifiers" dispensing safety check) to verify who
+  // they're shipping/handing medication to. No diagnosis, no narrative, no
+  // insurance member detail beyond what's needed to route a PA request.
+  pharmacy: ["patient_ref", "first_name", "last_name", "dob", "shipping_address", "prescription", "pharmacy_status", "fill_payment_method"],
 };
 
 export function scopeFields(role, record) {
