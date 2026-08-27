@@ -386,6 +386,7 @@ function LoginView({ onSuccess }) {
 function PortalView({ onLogout }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [actionError, setActionError] = useState(null);
   const [busy, setBusy] = useState(false);
 
   async function load() {
@@ -399,15 +400,29 @@ function PortalView({ onLogout }) {
 
   async function handleChoose(method) {
     setBusy(true);
+    setActionError(null);
     const token = localStorage.getItem("dn_token");
-    try { await choosePaymentMethod(token, method); await load(); }
-    finally { setBusy(false); }
+    try {
+      await choosePaymentMethod(token, method);
+      await load();
+    } catch (e) {
+      setActionError(e.data?.message || `Something went wrong (${e.data?.error || e.message}). Please try again.`);
+    } finally {
+      setBusy(false);
+    }
   }
   async function handlePay() {
     setBusy(true);
+    setActionError(null);
     const token = localStorage.getItem("dn_token");
-    try { await payNow(token, data.paymentRequest.id); await load(); }
-    finally { setBusy(false); }
+    try {
+      await payNow(token, data.paymentRequest.id);
+      await load();
+    } catch (e) {
+      setActionError(e.data?.message || `Something went wrong (${e.data?.error || e.message}). Please try again.`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (error) return <div className="wrap"><div className="card"><p>{error}</p><button className="btn primary" onClick={onLogout}>Back to login</button></div></div>;
@@ -470,6 +485,8 @@ function PortalView({ onLogout }) {
                     Pay ${data.paymentRequest.amount} now
                   </button>
                 )}
+
+                {actionError && <div className="errorbox">{actionError}</div>}
               </div>
             )}
 
