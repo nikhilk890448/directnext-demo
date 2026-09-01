@@ -133,3 +133,54 @@ patientRouter.post("/pay", requirePatientAuth, async (req, res) => {
 
   res.json({ ok: true });
 });
+
+// GET /api/patient/me/export — the patient's own complete journey record as
+// one downloadable JSON document: their patient record, journey, every
+// stage transition, every task, the full audit trail, prescription,
+// pricing, and payment/PA request history. This is safe to build exactly
+// because it's scoped to the authenticated patient's OWN data — the same
+// boundary that already protects /me. It is deliberately NOT the same
+// thing as a pharma-side "export any patient's journey" feature — that
+// would need real authentication added to the dashboard first, since the
+// dashboard is currently unauthenticated by design specifically because it
+// never carries PHI. Exporting PHI through that same unauthenticated
+// surface would undo that boundary, so that version isn't built here.
+patientRouter.get("/me/export", requirePatientAuth, async (req, res) => {
+  const patient = req.patient;
+
+  const { data: journeys } = await restGet(`journeys?patient_id=eq.${patient.id}&order=created_at.desc&select=*`);
+  const journeyIds = (journeys || []).map((j) => j.id);
+
+  const fetchAllForJourneys = async (table, orderCol = "created_at") => {
+    if (journeyIds.length === 0) return [];
+    const inList = journeyIds.join(",");
+    const { data } = await restGet(`${table}?journey_id=in.(${inList})&order=${orderCol}`);
+    return Array.isArray(data) ? data : [];
+  };
+
+  const [events, stageHistory, tasks, audit, pricing, payments, pharmacyRequests, eligibilityRequests] = await Promise.all([
+    fetchAllForJourneys("journey_events"),
+    fetchAllForJourneys("stage_history", "entered_at"),
+    fetchAllForJourneys("tasks"),
+    fetchAllForJourneys("audit_log"),
+    fetchAllForJourneys("pricing_quotes"),
+    fetchAllForJourneys("payment_requests"),
+    fetchAllForJourneys("pharmacy_requests"),
+    fetchAllForJourneys("eligibility_requests"),
+  ]);
+
+  const exportPayload = {
+    exportedAt: new Date().toISOString(),
+    patient: {
+      patientRef: patient.patient_ref, firstName: patient.first_name, lastName: patient.last_name,
+      dob: patient.dob, email: patient.email, phone: patient.phone, address: patient.address,
+      condition: patient.condition, narrative: patient.narrative, billingMethod: patient.billing_method,
+      insurance: patient.insurance,
+    },
+    journeys, journeyEvents: events, stageHistory, tasks, auditTrail: audit,
+    pricingQuotes: pricing, paymentRequests: payments, pharmacyRequests, eligibilityRequests,
+  };
+
+  res.setHeader("Content-Disposition", `attachment; filename="${patient.patient_ref}-journey-export.json"`);
+  res.json(exportPayload);
+});

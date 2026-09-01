@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { submitIntake, login, fetchMe, choosePaymentMethod, payNow } from "./api.js";
+import { submitIntake, login, fetchMe, choosePaymentMethod, payNow, downloadMyJourney } from "./api.js";
 
 // ============================================================================
 // This storefront is intentionally single-drug — the whole DTP channel is
@@ -511,6 +511,15 @@ function PortalView({ onLogout }) {
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  async function handleDownload() {
+    setActionError(null);
+    try {
+      await downloadMyJourney(localStorage.getItem("dn_token"));
+    } catch (e) {
+      setActionError("Couldn't download your data right now. Please try again.");
+    }
+  }
+
   async function handleChoose(method) {
     setBusy(true);
     setActionError(null);
@@ -564,6 +573,7 @@ function PortalView({ onLogout }) {
       <div className="card">
         <h2>Hi, {data.patient.firstName}</h2>
         <p className="stepdesc">Reference: <strong className="ref">{data.patient.patientRef}</strong></p>
+        <button className="linkbtn" onClick={handleDownload}>⬇ Download my complete journey (JSON)</button>
         {j ? (
           <>
             <div className="rail">

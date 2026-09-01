@@ -259,11 +259,12 @@ function JourneyDetail({ detail, onResolve, onSimulate, onRemind }) {
         ))}
       </ul>
 
-      <h4 className="sectionhead">Audit trail</h4>
-      <ul className="auditlist">
-        {(detail.audit || []).slice(-6).map((a, i) => (
+      <h4 className="sectionhead">Audit trail — full journey, every module</h4>
+      <ul className="auditlist scrollable">
+        {(detail.audit || []).map((a, i) => (
           <li key={i}><span className="mono dim">{a.actor}</span> — {a.decision}</li>
         ))}
+        {(detail.audit || []).length === 0 && <li className="dim">No audit entries yet.</li>}
       </ul>
     </div>
   );
@@ -351,6 +352,7 @@ function Style() {
       .sectionhead{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);margin:16px 0 8px;}
       .timelinelist, .tasklist, .auditlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;}
       .timelinelist li, .auditlist li{font-size:11.5px;color:var(--dim);}
+      .auditlist.scrollable{max-height:280px;overflow-y:auto;padding-right:6px;}
       .taskrow{display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--panel2);border-radius:6px;padding:8px 10px;}
       .taskrow.p-high{border-left:3px solid var(--red);}
       .tasktext{font-size:12px;}

@@ -28,3 +28,20 @@ export const choosePaymentMethod = (token, method) => req("/api/patient/fill-pay
 export const payNow = (token, paymentRequestId) => req("/api/patient/pay", {
   method: "POST", headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ paymentRequestId }),
 });
+
+// Triggers a real browser file download rather than returning JSON to the
+// caller — this one bypasses req() since we want the raw response body as
+// a downloadable file, not a parsed object to act on.
+export async function downloadMyJourney(token) {
+  const res = await fetch(`${API_URL}/api/patient/me/export`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error("export_failed");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "my-journey-export.json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
