@@ -119,13 +119,13 @@ intakeRouter.post("/", async (req, res) => {
     consentBasis: "consent",
   });
   await appendAudit({
-    journeyId: journey.id,
-    actor: "agent:eligibility",
-    decision: elig
-      ? `A01 cleared — completeness, consent${billingMethod === "insurance" ? ", and insurance fields" : ""} verified; pathway: ${elig.pathway}${elig.paRequired ? " (PA likely)" : ""}`
-      : "A01 unavailable — proceeded on fail-open baseline (ORCH plane, never blocks a patient)",
-    fieldsShared: "pathway + PA-likely flag only",
-  });
+  journeyId: journey.id,
+  actor: "agent:eligibility",
+  decision: elig
+    ? `A01 cleared — completeness, consent${billingMethod === "insurance" ? ", and insurance fields" : ""} verified${elig.stediChecked ? ` (real-time Stedi check performed${elig.stediCheckId ? `, id ${elig.stediCheckId}` : ""})` : (billingMethod === "insurance" ? " (Stedi not consulted — field presence only)" : "")}; pathway: ${elig.pathway}${elig.paRequired ? " (PA likely)" : ""}`
+    : "A01 unavailable — proceeded on fail-open baseline (ORCH plane, never blocks a patient)",
+  fieldsShared: "pathway + PA-likely flag only",
+});
 
   // A03 runs SECOND — purely the clinical/policy layer now (drug
   // pre-selection, contraindication flag). Completeness and consent were

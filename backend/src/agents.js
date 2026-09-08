@@ -1,4 +1,5 @@
 import { supabase } from "./db.js";
+import { checkStediEligibility } from "./stedi.js";
 
 // ============================================================================
 // Every function below is a deterministic, rule-based stand-in. Each has a
@@ -32,7 +33,7 @@ const PA_LIKELY_CONDITIONS = ["Rheumatoid Arthritis", "Multiple Sclerosis", "Cro
  * A03, downstream, is purely the clinical/policy layer — it doesn't
  * re-check any of this.
  */
-export function checkEligibility(patient) {
+export async function checkEligibility(patient) {
   const requiredFields = ["first_name", "last_name", "dob", "email", "condition"];
   const missingFields = requiredFields.filter((f) => !patient[f]);
   if (missingFields.length) {
@@ -53,7 +54,28 @@ export function checkEligibility(patient) {
   if (!ins || missing.length) {
     return { pass: false, reason: `Opted into insurance billing but missing: ${missing.join(", ") || "insurance details"}`, pathway: "hold", paRequired: null };
   }
-  return { pass: true, reason: null, pathway: "insured", paRequired: PA_LIKELY_CONDITIONS.includes(patient.condition) };
+
+  const paRequired = PA_LIKELY_CONDITIONS.includes(patient.condition);
+
+  if (!process.env.STEDI_API_KEY) {
+    // Not configured — same behavior as before this integration existed.
+    return { pass: true, reason: null, pathway: "insured", paRequired, stediChecked: false };
+  }
+
+  const stedi = await checkStediEligibility(patient);
+  if (stedi.ok && stedi.active === false) {
+    return {
+      pass: false,
+      reason: "Real-time eligibility check found no active coverage for this payer/member ID combination",
+      pathway: "hold", paRequired: null, stediChecked: true, stediCheckId: stedi.checkId,
+    };
+  }
+  // stedi.ok === false (unreachable/error) fails open here — proceeds
+  // exactly as if Stedi weren't configured at all.
+  return {
+    pass: true, reason: null, pathway: "insured", paRequired,
+    stediChecked: stedi.ok, stediPlanDetails: stedi.planDetails || null, stediCheckId: stedi.checkId || null,
+  };
 }
 
 /**
