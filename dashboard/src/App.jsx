@@ -222,12 +222,23 @@ function JourneyDetail({ detail, onResolve, onSimulate, onRemind }) {
 
 {j.benefit_profile && (
   <div className="card" style={{ marginTop: 16, background: "#f4f9ff" }}>
-    <h4 className="sectionhead" style={{ marginTop: 0 }}>Benefit profile (Cortex)</h4>
-    <p className="small">Plan: <strong>{j.benefit_profile.planName || "—"}</strong></p>
-    <p className="small">Coverage active: <strong>{j.benefit_profile.coverageActive ? "Yes" : "No"}</strong></p>
-    <p className="small">Deductible: {j.benefit_profile.deductible || "—"} · Copay: {j.benefit_profile.copay || "—"} · Coinsurance: {j.benefit_profile.coinsurance || "—"}</p>
-    <p className="small">Prior auth likely: <strong>{j.benefit_profile.priorAuthLikely ? "Yes" : "No"}</strong></p>
-    {j.benefit_profile.notes && <p className="small dim">{j.benefit_profile.notes}</p>}
+    <h4 className="sectionhead" style={{ marginTop: 0 }}>Benefit profile (Cortex — DNX-A01)</h4>
+    <p className="small">Pathway: <strong>{j.benefit_profile.pathway || "—"}</strong>{j.benefit_profile.pathway_conf != null ? ` (confidence: ${Math.round(j.benefit_profile.pathway_conf * 100)}%)` : ""}</p>
+    <p className="small">Coverage: <strong>{j.benefit_profile.coverage?.status || "—"}</strong> · Plan type: {j.benefit_profile.coverage?.plan_type || "—"}</p>
+    <p className="small">Prior auth required: <strong>{j.benefit_profile.pa_required ? "Yes" : "No"}</strong></p>
+    {j.benefit_profile.routing?.to?.length > 0 && (
+      <p className="small dim">Routes to: {j.benefit_profile.routing.to.join(", ")}</p>
+    )}
+    {j.benefit_profile.fields?.some((f) => f.judge === "flag") && (
+      <div className="small" style={{ marginTop: 10 }}>
+        <strong style={{ color: "var(--amber)" }}>Flagged for review:</strong>
+        <ul style={{ margin: "6px 0 0", paddingLeft: 16 }}>
+          {j.benefit_profile.fields.filter((f) => f.judge === "flag").map((f, i) => (
+            <li key={i} className="dim" style={{ marginBottom: 4 }}>{String(f.value)}</li>
+          ))}
+        </ul>
+      </div>
+    )}
   </div>
 )}
 
