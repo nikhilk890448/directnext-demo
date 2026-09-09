@@ -119,14 +119,32 @@ intakeRouter.post("/", async (req, res) => {
     fieldsShared: "patient_ref, consent_scope",
     consentBasis: "consent",
   });
+
+  // Distinguishes three real cases now, instead of collapsing "not
+  // configured" and "configured but rejected" into the same message:
+  //   1. Stedi checked successfully
+  //   2. Stedi not consulted at all (not configured, or self-pay)
+  //   3. Stedi WAS consulted and returned an error (e.g. bad member ID) —
+  //      shows the actual reason, so this is diagnosable from the
+  //      dashboard alone instead of needing raw backend logs.
+  let stediNote = "";
+  if (billingMethod === "insurance") {
+    if (elig?.stediChecked) {
+      stediNote = ` (real-time Stedi check performed${elig.stediCheckId ? `, id ${elig.stediCheckId}` : ""})`;
+    } else if (elig?.stediError) {
+      stediNote = ` (Stedi check attempted but rejected: ${elig.stediError})`;
+    } else {
+      stediNote = " (Stedi not consulted — field presence only)";
+    }
+  }
   await appendAudit({
-  journeyId: journey.id,
-  actor: "agent:eligibility",
-  decision: elig
-    ? `A01 cleared — completeness, consent${billingMethod === "insurance" ? ", and insurance fields" : ""} verified${elig.stediChecked ? ` (real-time Stedi check performed${elig.stediCheckId ? `, id ${elig.stediCheckId}` : ""})` : (billingMethod === "insurance" ? " (Stedi not consulted — field presence only)" : "")}; pathway: ${elig.pathway}${elig.paRequired ? " (PA likely)" : ""}`
-    : "A01 unavailable — proceeded on fail-open baseline (ORCH plane, never blocks a patient)",
-  fieldsShared: "pathway + PA-likely flag only",
-});
+    journeyId: journey.id,
+    actor: "agent:eligibility",
+    decision: elig
+      ? `A01 cleared — completeness, consent${billingMethod === "insurance" ? ", and insurance fields" : ""} verified${stediNote}; pathway: ${elig.pathway}${elig.paRequired ? " (PA likely)" : ""}`
+      : "A01 unavailable — proceeded on fail-open baseline (ORCH plane, never blocks a patient)",
+    fieldsShared: "pathway + PA-likely flag only",
+  });
 
   // A03 runs SECOND — purely the clinical/policy layer now (drug
   // pre-selection, contraindication flag). Completeness and consent were

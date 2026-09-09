@@ -31,7 +31,6 @@ export async function checkStediEligibility(patient) {
   try {
     response = await fetch(STEDI_ENDPOINT, {
       method: "POST",
-      // FIXED: Stedi requires the "Key " prefix — a bare API key fails auth.
       headers: { Authorization: `Key ${process.env.STEDI_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
@@ -44,7 +43,14 @@ export async function checkStediEligibility(patient) {
   console.log("[stedi] INCOMING eligibility response:", JSON.stringify(body, null, 2));
 
   if (!response.ok || (body.errors && body.errors.length > 0)) {
-    return { ok: false, reason: "stedi_error", raw: body };
+    // Surface the ACTUAL reason (e.g. AAA code 72 = invalid member ID)
+    // instead of a generic "stedi error" — this is what was previously
+    // invisible anywhere except raw Render logs.
+    const errorSummary = (body.errors || [])
+      .map((e) => `${e.code ? `[${e.code}] ` : ""}${e.description || "unknown error"}`)
+      .join("; ") || `HTTP ${response.status}`;
+    console.log("[stedi] request rejected:", errorSummary);
+    return { ok: false, reason: "stedi_error", errorSummary, raw: body };
   }
 
   const activeStatus = (body.planStatus || []).find((s) => s.statusCode === "1");
@@ -61,19 +67,15 @@ export async function checkStediEligibility(patient) {
 /**
  * Strips patient-identifying fields from a raw Stedi response before it's
  * handed to any LLM — keeps plan/benefit data (what's actually needed to
- * reason about coverage), drops subscriber/dependent name, DOB, and member
- * ID. Payer name/ID is kept (not patient PII).
+ * reason about coverage), drops everything about who the subscriber is.
  */
 export function redactStediResponse(raw) {
   if (!raw) return null;
-  const stripPerson = (p) => (p ? { relationship: p.relationship, gender: p.gender } : undefined);
   return {
     payer: raw.payer ? { name: raw.payer.name } : undefined,
     planInformation: raw.planInformation,
     planStatus: raw.planStatus,
     benefitsInformation: raw.benefitsInformation,
-    subscriber: stripPerson(raw.subscriber),
-    dependents: Array.isArray(raw.dependents) ? raw.dependents.map(stripPerson) : undefined,
     errors: raw.errors,
   };
 }

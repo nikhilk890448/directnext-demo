@@ -73,8 +73,24 @@ export async function checkEligibility(patient) {
     };
   }
 
-  // Coverage confirmed active (or Stedi unavailable, failing open) — try
-  // the custom-LLM benefit profile on top, using only redacted data.
+  // A validation error from Stedi (e.g. AAA code 72 — invalid member ID)
+  // is NOT the same thing as Stedi being unreachable. It's positive
+  // evidence the submitted insurance details are wrong, not an absence of
+  // information — so this holds for review, same as a confirmed-inactive
+  // result above, rather than silently falling through to the "insured"
+  // default below. Only a genuine outage (network error, no response at
+  // all) fails open past this point.
+  if (!stedi.ok && stedi.reason === "stedi_error") {
+    return {
+      pass: false,
+      reason: `Real-time eligibility check rejected the submitted insurance details: ${stedi.errorSummary}`,
+      pathway: "hold", paRequired: null, stediChecked: false, stediError: stedi.errorSummary,
+    };
+  }
+
+  // From here, either coverage is confirmed active, or Stedi genuinely
+  // couldn't be reached (network error) — try the custom-LLM benefit
+  // profile on top, using only redacted data.
   let benefitProfile = null;
   let pathway = "insured";
   let paRequired = heuristicPaRequired;
@@ -92,7 +108,9 @@ export async function checkEligibility(patient) {
     pass: pathway !== "hold",
     reason: pathway === "hold" ? "Benefit profile review recommended holding for manual coverage review" : null,
     pathway, paRequired,
-    stediChecked: stedi.ok, stediPlanDetails: stedi.planDetails || null, stediCheckId: stedi.checkId || null,
+    stediChecked: stedi.ok,
+    stediError: stedi.ok ? null : (stedi.errorSummary || stedi.reason),
+    stediPlanDetails: stedi.planDetails || null, stediCheckId: stedi.checkId || null,
     benefitProfile,
   };
 }
