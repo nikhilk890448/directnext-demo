@@ -17,8 +17,21 @@ function hashToUnit(str) {
 
 // Conditions where a prior-auth requirement is more likely — a coarse,
 // declared heuristic (not a real payer-policy lookup), used only when
-// Cortex hasn't produced a real benefit profile.
+// Cortex hasn't produced a real benefit profile, or its own profile
+// doesn't include a pa_required determination.
 const PA_LIKELY_CONDITIONS = ["Rheumatoid Arthritis", "Multiple Sclerosis", "Crohn's Disease"];
+
+// DNX-A01's own benefit_profile.pathway vocabulary is richer than ours
+// ("self-pay" | "standard_copay" | "direct_dispense" | "hold"). Our
+// pipeline downstream only needs to know: does this hold for review, is
+// the patient paying out of pocket, or does processing continue normally
+// (which we still call "insured" — the actual payment method gets chosen
+// later, at the pharmacy stage, regardless of this label).
+function mapCortexPathway(raw) {
+  if (raw === "hold") return "hold";
+  if (raw === "self-pay") return "self-pay";
+  return "insured"; // standard_copay, direct_dispense, or any other value — proceed normally
+}
 
 /**
  * A01 — Eligibility & Benefits, ORCH plane, fail-open. Runs FIRST, before
@@ -27,10 +40,9 @@ const PA_LIKELY_CONDITIONS = ["Rheumatoid Arthritis", "Multiple Sclerosis", "Cro
  * Layers, each optional:
  *  1. Field completeness + consent (always runs)
  *  2. Real-time Stedi check, if STEDI_API_KEY is set
- *  3. Cortex benefit profile, if CORTEX_API_KEY + CORTEX_AGENT_ID are set.
- *     buildBenefitProfile() returns the "benefit_profile" output variable
- *     itself — pathway lives INSIDE it (llmResult.pathway), it's not a
- *     separate sibling field.
+ *  3. Cortex benefit profile (DNX-A01 agent), if CORTEX_API_KEY +
+ *     CORTEX_AGENT_ID are set — see benefit-profile-llm.js for the
+ *     confirmed request/response contract.
  *
  * IMPORTANT policy: the DEFAULT pathway when Cortex hasn't produced a real
  * benefit profile is "self-pay", not "insured" — claiming confirmed
@@ -62,7 +74,6 @@ export async function checkEligibility(patient) {
   }
 
   if (!process.env.STEDI_API_KEY) {
-    // No real-time check available at all — default conservative, not "insured".
     return { pass: true, reason: null, pathway: "self-pay", paRequired: false, stediChecked: false, benefitProfile: null, unverified: true };
   }
 
@@ -76,9 +87,6 @@ export async function checkEligibility(patient) {
     };
   }
 
-  // A validation error from Stedi (e.g. AAA code 72 — invalid member ID)
-  // is positive evidence the submitted insurance details are wrong, not
-  // an absence of information — holds for review rather than defaulting.
   if (!stedi.ok && stedi.reason === "stedi_error") {
     return {
       pass: false,
@@ -87,18 +95,27 @@ export async function checkEligibility(patient) {
     };
   }
 
-  // Try Cortex on top of whatever Stedi returned (active coverage, or a
-  // genuine outage/network error we're failing open past).
   let benefitProfile = null;
-  let pathway = "self-pay"; // conservative default — only "insured" if Cortex actually says so
+  let pathway = "self-pay"; // conservative default — only overridden if Cortex actually returns a profile
   let paRequired = false;
   if (stedi.ok) {
-    const redacted = redactStediResponse(stedi.raw);
-    const llmResult = await buildBenefitProfile(redacted); // this IS the benefit_profile object, pathway nested inside
+    // patient_ref is a safe, non-identifying reference code (e.g.
+    // "P-48604") — not PHI. Sent explicitly since DNX-A01's schema asks
+    // for it back in benefit_profile.patient_ref, and it can't fill that
+    // in from redacted Stedi data alone (which never contains it).
+    const redacted = { ...redactStediResponse(stedi.raw), patient_ref: patient.patient_ref };
+    const llmResult = await buildBenefitProfile(redacted); // real DNX-A01 benefit_profile shape
     if (llmResult) {
       benefitProfile = llmResult;
-      pathway = llmResult.pathway || "hold";
-      paRequired = llmResult.priorAuthLikely ?? PA_LIKELY_CONDITIONS.includes(patient.condition);
+      pathway = mapCortexPathway(llmResult.pathway);
+      paRequired = typeof llmResult.pa_required === "boolean" ? llmResult.pa_required : PA_LIKELY_CONDITIONS.includes(patient.condition);
+
+      // Defense in depth: DNX-A01's own instructions say confidence below
+      // 0.90 should force pathway to "hold" — honor that here too, in
+      // case the agent doesn't always apply its own rule correctly.
+      if (typeof llmResult.pathway_conf === "number" && llmResult.pathway_conf < 0.90) {
+        pathway = "hold";
+      }
     }
   }
 
@@ -107,7 +124,7 @@ export async function checkEligibility(patient) {
     reason: pathway === "hold" ? "Benefit profile review recommended holding for manual coverage review" : null,
     pathway, paRequired,
     stediChecked: stedi.ok,
-    stediActiveCoverage: stedi.ok ? stedi.active : null, // preserved even if Cortex failed, so this isn't lost
+    stediActiveCoverage: stedi.ok ? stedi.active : null,
     stediError: stedi.ok ? null : (stedi.errorSummary || stedi.reason),
     stediPlanDetails: stedi.planDetails || null, stediCheckId: stedi.checkId || null,
     benefitProfile,
