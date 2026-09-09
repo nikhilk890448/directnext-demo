@@ -1,5 +1,4 @@
 import { supabase } from "./db.js";
-import { checkStediEligibility } from "./stedi.js";
 import { checkStediEligibility, redactStediResponse } from "./stedi.js";
 import { buildBenefitProfile } from "./benefit-profile-llm.js";
 
@@ -97,7 +96,6 @@ export async function checkEligibility(patient) {
     benefitProfile,
   };
 }
-
 
 /**
  * A03 — Appropriateness Guardrail, GOV plane, fail-closed. Runs SECOND,
