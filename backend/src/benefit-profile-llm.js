@@ -30,9 +30,12 @@ export async function buildBenefitProfile(redactedStediResponse) {
   const requestBody = {
     agent_id: parseInt(process.env.CORTEX_AGENT_ID, 10),
     variables: {
-      // CONFIRMED: the exact input variable name/type configured on this
-      // agent. Passed as a native JSON value, not a stringified blob.
-      insurance_profile: redactedStediResponse,
+      // CONFIRMED (from Cortex's own validation error): despite being a
+      // "json"-typed variable in Cortex's UI, the API wants it as a JSON
+      // STRING, not a native object — Cortex's own template engine parses
+      // it internally. Sending the raw object caused: "Input
+      // 'insurance_profile' has the wrong type: expected a string."
+      insurance_profile: JSON.stringify(redactedStediResponse),
     },
     session_id: randomUUID(), // fresh per call — this isn't a multi-turn conversation
     scenario_id: null,
