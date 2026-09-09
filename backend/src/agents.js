@@ -98,6 +98,7 @@ export async function checkEligibility(patient) {
   let benefitProfile = null;
   let pathway = "self-pay"; // conservative default — only overridden if Cortex actually returns a profile
   let paRequired = false;
+  let needsEligibilityReview = false;
   if (stedi.ok) {
     // patient_ref is a safe, non-identifying reference code (e.g.
     // "P-48604") — not PHI. Sent explicitly since DNX-A01's schema asks
@@ -116,12 +117,25 @@ export async function checkEligibility(patient) {
       if (typeof llmResult.pathway_conf === "number" && llmResult.pathway_conf < 0.90) {
         pathway = "hold";
       }
+
+      // A Cortex-driven "hold" is NOT the same situation as Stedi
+      // rejecting bad data above — the patient hasn't done anything
+      // wrong here (Stedi already confirmed real active coverage); the
+      // uncertainty is in the downstream benefit analysis, not their
+      // input. Rejecting their registration outright for that would be
+      // the wrong call. Instead: default to self-pay (same "couldn't
+      // confidently confirm insured status" principle as everywhere
+      // else) and flag it for staff review rather than blocking intake.
+      if (pathway === "hold") {
+        pathway = "self-pay";
+        needsEligibilityReview = true;
+      }
     }
   }
 
   return {
-    pass: pathway !== "hold",
-    reason: pathway === "hold" ? "Benefit profile review recommended holding for manual coverage review" : null,
+    pass: true, // a Cortex-driven uncertainty never blocks intake — only Stedi-confirmed bad data does, above
+    reason: null,
     pathway, paRequired,
     stediChecked: stedi.ok,
     stediActiveCoverage: stedi.ok ? stedi.active : null,
@@ -129,6 +143,7 @@ export async function checkEligibility(patient) {
     stediPlanDetails: stedi.planDetails || null, stediCheckId: stedi.checkId || null,
     benefitProfile,
     unverified: benefitProfile === null,
+    needsEligibilityReview,
   };
 }
 

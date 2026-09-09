@@ -120,35 +120,47 @@ intakeRouter.post("/", async (req, res) => {
     consentBasis: "consent",
   });
 
-  // Three distinct pieces of information, kept visible separately so
-  // nothing gets silently lost: (1) was Stedi consulted, and did it
-  // confirm active coverage; (2) did Cortex produce a real benefit
-  // profile; (3) the resulting pathway, which defaults conservatively to
-  // self-pay whenever Cortex hasn't actually confirmed "insured" — even
-  // if Stedi separately found active coverage, that fact is preserved
-  // here rather than discarded just because pathway ended up self-pay.
+  // Distinguishes three real cases now, instead of collapsing "not
+  // configured" and "configured but rejected" into the same message:
+  //   1. Stedi checked successfully
+  //   2. Stedi not consulted at all (not configured, or self-pay)
+  //   3. Stedi WAS consulted and returned an error (e.g. bad member ID) —
+  //      shows the actual reason, so this is diagnosable from the
+  //      dashboard alone instead of needing raw backend logs.
   let stediNote = "";
   if (billingMethod === "insurance") {
     if (elig?.stediChecked) {
-      stediNote = ` (real-time Stedi check performed${elig.stediCheckId ? `, id ${elig.stediCheckId}` : ""}${elig.stediActiveCoverage != null ? `, active coverage: ${elig.stediActiveCoverage}` : ""})`;
+      stediNote = ` (real-time Stedi check performed${elig.stediCheckId ? `, id ${elig.stediCheckId}` : ""})`;
     } else if (elig?.stediError) {
       stediNote = ` (Stedi check attempted but rejected: ${elig.stediError})`;
     } else {
       stediNote = " (Stedi not consulted — field presence only)";
     }
   }
-  const benefitNote = elig?.benefitProfile
-    ? " (Cortex benefit profile generated)"
-    : (billingMethod === "insurance" ? " — no Cortex benefit profile available, defaulted to self-pay pending manual review" : "");
-
   await appendAudit({
     journeyId: journey.id,
     actor: "agent:eligibility",
     decision: elig
-      ? `A01 cleared — completeness, consent${billingMethod === "insurance" ? ", and insurance fields" : ""} verified${stediNote}${benefitNote}; pathway: ${elig.pathway}${elig.paRequired ? " (PA likely)" : ""}`
+      ? `A01 cleared — completeness, consent${billingMethod === "insurance" ? ", and insurance fields" : ""} verified${stediNote}; pathway: ${elig.pathway}${elig.paRequired ? " (PA likely)" : ""}`
       : "A01 unavailable — proceeded on fail-open baseline (ORCH plane, never blocks a patient)",
     fieldsShared: "pathway + PA-likely flag only",
   });
+
+  // A Cortex-driven eligibility hold (uncertain benefit analysis, NOT bad
+  // patient data) doesn't block intake — it defaulted to self-pay above
+  // and gets a review task here instead, so staff can confirm the real
+  // payment path before it matters at the pharmacy stage.
+  if (elig?.needsEligibilityReview) {
+    await supabase.from("tasks").insert({
+      journey_id: journey.id,
+      type: "Eligibility review",
+      reason: elig.benefitProfile?.fields?.find((f) => f.name === "pathway_rationale")?.value
+        || "Cortex benefit-profile analysis was low-confidence — defaulted to self-pay pending review",
+      priority: "medium",
+      assigned_role: "Access & Benefits",
+    });
+    await appendAudit({ journeyId: journey.id, actor: "agent:eligibility", decision: "Cortex-driven eligibility review task created (defaulted to self-pay, not rejected)", fieldsShared: "review reason only" });
+  }
 
   // A03 runs SECOND — purely the clinical/policy layer now (drug
   // pre-selection, contraindication flag). Completeness and consent were

@@ -82,6 +82,13 @@ export async function buildBenefitProfile(redactedStediResponse) {
       return null;
     }
 
+    // Confirmed from a real response: the agent wraps its answer in a
+    // top-level "benefit_profile" key rather than returning the profile
+    // fields directly at the top level. Unwrap it if present.
+    if (parsed.benefit_profile) {
+      parsed = parsed.benefit_profile;
+    }
+
     if (!parsed.pathway) {
       console.log("[cortex] parsed benefit_profile had no pathway field:", JSON.stringify(parsed));
       return null;
