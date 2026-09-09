@@ -221,7 +221,7 @@ function JourneyDetail({ detail, onResolve, onSimulate, onRemind }) {
       <p className="small">SLA due: <span className="mono">{j.sla_due_at ? new Date(j.sla_due_at).toLocaleString() : "—"}</span></p>
 
 {j.benefit_profile && (
-  <div className="card" style={{ marginTop: 16, background: "#f4f9ff" }}>
+  <div className="card" style={{ marginTop: 16, background: "var(--panel2)", borderLeft: "3px solid var(--cyan)" }}>
     <h4 className="sectionhead" style={{ marginTop: 0 }}>Benefit profile (Cortex — DNX-A01)</h4>
     <p className="small">Pathway: <strong>{j.benefit_profile.pathway || "—"}</strong>{j.benefit_profile.pathway_conf != null ? ` (confidence: ${Math.round(j.benefit_profile.pathway_conf * 100)}%)` : ""}</p>
     <p className="small">Coverage: <strong>{j.benefit_profile.coverage?.status || "—"}</strong> · Plan type: {j.benefit_profile.coverage?.plan_type || "—"}</p>
