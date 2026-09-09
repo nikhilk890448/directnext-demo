@@ -16,25 +16,28 @@ function hashToUnit(str) {
 }
 
 // Conditions where a prior-auth requirement is more likely — a coarse,
-// declared heuristic (not a real payer-policy lookup), used only to set an
-// early expectation carried forward to the insurance_pa stage.
+// declared heuristic (not a real payer-policy lookup), used only when
+// Cortex hasn't produced a real benefit profile.
 const PA_LIKELY_CONDITIONS = ["Rheumatoid Arthritis", "Multiple Sclerosis", "Crohn's Disease"];
 
 /**
  * A01 — Eligibility & Benefits, ORCH plane, fail-open. Runs FIRST, before
  * any patient/journey record is even created.
  *
- * Layers, each optional and each failing open to the one before it:
+ * Layers, each optional:
  *  1. Field completeness + consent (always runs)
- *  2. Real-time Stedi check, if STEDI_API_KEY is set — confirms coverage
- *     is actually active, not just field-complete
- *  3. Custom-LLM benefit profile, if CUSTOM_LLM_API_KEY is set — takes the
- *     REDACTED Stedi response (no patient name/DOB/member ID) and produces
- *     a structured benefit profile + pathway. Replaces the coarse
- *     PA_LIKELY_CONDITIONS heuristic with something grounded in real
- *     benefit data, once configured.
- * An outage or missing config at any layer never blocks a patient — it
- * just falls back to the layer before it.
+ *  2. Real-time Stedi check, if STEDI_API_KEY is set
+ *  3. Cortex benefit profile, if CORTEX_API_KEY + CORTEX_AGENT_ID are set.
+ *     buildBenefitProfile() returns the "benefit_profile" output variable
+ *     itself — pathway lives INSIDE it (llmResult.pathway), it's not a
+ *     separate sibling field.
+ *
+ * IMPORTANT policy: the DEFAULT pathway when Cortex hasn't produced a real
+ * benefit profile is "self-pay", not "insured" — claiming confirmed
+ * insurance benefits without an actual determination behind it was the
+ * wrong default. If Stedi DID separately confirm active coverage but
+ * Cortex still failed, that confirmation is preserved in the audit trail
+ * (see intake.js) even though the pathway itself defaults to self-pay.
  */
 export async function checkEligibility(patient) {
   const requiredFields = ["first_name", "last_name", "dob", "email", "condition"];
@@ -58,13 +61,13 @@ export async function checkEligibility(patient) {
     return { pass: false, reason: `Opted into insurance billing but missing: ${missing.join(", ") || "insurance details"}`, pathway: "hold", paRequired: null };
   }
 
-  const heuristicPaRequired = PA_LIKELY_CONDITIONS.includes(patient.condition);
-
   if (!process.env.STEDI_API_KEY) {
-    return { pass: true, reason: null, pathway: "insured", paRequired: heuristicPaRequired, stediChecked: false };
+    // No real-time check available at all — default conservative, not "insured".
+    return { pass: true, reason: null, pathway: "self-pay", paRequired: false, stediChecked: false, benefitProfile: null, unverified: true };
   }
 
   const stedi = await checkStediEligibility(patient);
+
   if (stedi.ok && stedi.active === false) {
     return {
       pass: false,
@@ -74,12 +77,8 @@ export async function checkEligibility(patient) {
   }
 
   // A validation error from Stedi (e.g. AAA code 72 — invalid member ID)
-  // is NOT the same thing as Stedi being unreachable. It's positive
-  // evidence the submitted insurance details are wrong, not an absence of
-  // information — so this holds for review, same as a confirmed-inactive
-  // result above, rather than silently falling through to the "insured"
-  // default below. Only a genuine outage (network error, no response at
-  // all) fails open past this point.
+  // is positive evidence the submitted insurance details are wrong, not
+  // an absence of information — holds for review rather than defaulting.
   if (!stedi.ok && stedi.reason === "stedi_error") {
     return {
       pass: false,
@@ -88,19 +87,18 @@ export async function checkEligibility(patient) {
     };
   }
 
-  // From here, either coverage is confirmed active, or Stedi genuinely
-  // couldn't be reached (network error) — try the custom-LLM benefit
-  // profile on top, using only redacted data.
+  // Try Cortex on top of whatever Stedi returned (active coverage, or a
+  // genuine outage/network error we're failing open past).
   let benefitProfile = null;
-  let pathway = "insured";
-  let paRequired = heuristicPaRequired;
+  let pathway = "self-pay"; // conservative default — only "insured" if Cortex actually says so
+  let paRequired = false;
   if (stedi.ok) {
     const redacted = redactStediResponse(stedi.raw);
-    const llmResult = await buildBenefitProfile(redacted);
+    const llmResult = await buildBenefitProfile(redacted); // this IS the benefit_profile object, pathway nested inside
     if (llmResult) {
-      benefitProfile = llmResult.benefitProfile;
-      pathway = llmResult.pathway;
-      paRequired = llmResult.benefitProfile?.priorAuthLikely ?? heuristicPaRequired;
+      benefitProfile = llmResult;
+      pathway = llmResult.pathway || "hold";
+      paRequired = llmResult.priorAuthLikely ?? PA_LIKELY_CONDITIONS.includes(patient.condition);
     }
   }
 
@@ -109,9 +107,11 @@ export async function checkEligibility(patient) {
     reason: pathway === "hold" ? "Benefit profile review recommended holding for manual coverage review" : null,
     pathway, paRequired,
     stediChecked: stedi.ok,
+    stediActiveCoverage: stedi.ok ? stedi.active : null, // preserved even if Cortex failed, so this isn't lost
     stediError: stedi.ok ? null : (stedi.errorSummary || stedi.reason),
     stediPlanDetails: stedi.planDetails || null, stediCheckId: stedi.checkId || null,
     benefitProfile,
+    unverified: benefitProfile === null,
   };
 }
 
