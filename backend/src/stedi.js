@@ -1,20 +1,11 @@
 // Real-time eligibility checks via Stedi's clearinghouse API. This answers
-// "is this coverage actually active, and does it cover this therapy line"
-// — a genuinely different question from what A01 checked before (only
-// whether the patient typed *something* into the insurance fields).
-//
-// This is distinct from eligibility-check.js, which is the PRIOR
-// AUTHORIZATION step (pharmacy-initiated, after a clinician has already
-// prescribed something). This module runs earlier, at intake, before any
-// clinician is involved — a real X12 270/271 check, not a PA request.
+// "is this coverage actually active" — a genuinely different question from
+// what A01 checked before (only whether the patient typed *something* into
+// the insurance fields). It does NOT answer "is this specific therapy
+// covered" — that's what prior authorization (pharmacy-initiated, see
+// eligibility-check.js) is for; a 270/271 check can't determine that.
 const STEDI_ENDPOINT = "https://healthcare.us.stedi.com/2024-04-01/change/medicalnetwork/eligibility/v3";
 
-// Every request and response is logged in full — this is the visibility
-// into outgoing/incoming JSON. Check your Render backend logs for lines
-// starting with [stedi]. Stedi's own portal (portal.stedi.com) also shows
-// every check with a proper inspector UI, linked by the "id" and
-// "eligibilitySearchId" fields in the response below — that's usually the
-// better place to actually read a payload, not just confirm it happened.
 export async function checkStediEligibility(patient) {
   const ins = patient.insurance;
   if (!ins?.payer_id || !ins?.member_id) return { ok: false, reason: "missing_fields" };
@@ -40,7 +31,8 @@ export async function checkStediEligibility(patient) {
   try {
     response = await fetch(STEDI_ENDPOINT, {
       method: "POST",
-      headers: { Authorization: process.env.STEDI_API_KEY, "Content-Type": "application/json" },
+      // FIXED: Stedi requires the "Key " prefix — a bare API key fails auth.
+      headers: { Authorization: `Key ${process.env.STEDI_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     body = await response.json();
@@ -63,5 +55,25 @@ export async function checkStediEligibility(patient) {
     checkId: body.id || null,
     searchId: body.eligibilitySearchId || null,
     raw: body,
+  };
+}
+
+/**
+ * Strips patient-identifying fields from a raw Stedi response before it's
+ * handed to any LLM — keeps plan/benefit data (what's actually needed to
+ * reason about coverage), drops subscriber/dependent name, DOB, and member
+ * ID. Payer name/ID is kept (not patient PII).
+ */
+export function redactStediResponse(raw) {
+  if (!raw) return null;
+  const stripPerson = (p) => (p ? { relationship: p.relationship, gender: p.gender } : undefined);
+  return {
+    payer: raw.payer ? { name: raw.payer.name } : undefined,
+    planInformation: raw.planInformation,
+    planStatus: raw.planStatus,
+    benefitsInformation: raw.benefitsInformation,
+    subscriber: stripPerson(raw.subscriber),
+    dependents: Array.isArray(raw.dependents) ? raw.dependents.map(stripPerson) : undefined,
+    errors: raw.errors,
   };
 }

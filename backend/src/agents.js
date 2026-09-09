@@ -1,5 +1,7 @@
 import { supabase } from "./db.js";
 import { checkStediEligibility } from "./stedi.js";
+import { checkStediEligibility, redactStediResponse } from "./stedi.js";
+import { buildBenefitProfile } from "./benefit-profile-llm.js";
 
 // ============================================================================
 // Every function below is a deterministic, rule-based stand-in. Each has a
@@ -21,17 +23,19 @@ const PA_LIKELY_CONDITIONS = ["Rheumatoid Arthritis", "Multiple Sclerosis", "Cro
 
 /**
  * A01 — Eligibility & Benefits, ORCH plane, fail-open. Runs FIRST, before
- * any patient/journey record is even created. This is the single gate for
- * everything about whether the submission is usable at all:
- *   1. Intake completeness — the required fields are present.
- *   2. Consent — care-coordination consent was captured. Required on both
- *      paths, but especially load-bearing on the insurance path, since it's
- *      what makes sharing with the payer for a coverage determination
- *      legitimate later at insurance_pa.
- *   3. If billing_method is "insurance": the insurance fields needed to
- *      even attempt a coverage check are present (payer_id, member_id).
- * A03, downstream, is purely the clinical/policy layer — it doesn't
- * re-check any of this.
+ * any patient/journey record is even created.
+ *
+ * Layers, each optional and each failing open to the one before it:
+ *  1. Field completeness + consent (always runs)
+ *  2. Real-time Stedi check, if STEDI_API_KEY is set — confirms coverage
+ *     is actually active, not just field-complete
+ *  3. Custom-LLM benefit profile, if CUSTOM_LLM_API_KEY is set — takes the
+ *     REDACTED Stedi response (no patient name/DOB/member ID) and produces
+ *     a structured benefit profile + pathway. Replaces the coarse
+ *     PA_LIKELY_CONDITIONS heuristic with something grounded in real
+ *     benefit data, once configured.
+ * An outage or missing config at any layer never blocks a patient — it
+ * just falls back to the layer before it.
  */
 export async function checkEligibility(patient) {
   const requiredFields = ["first_name", "last_name", "dob", "email", "condition"];
@@ -55,11 +59,10 @@ export async function checkEligibility(patient) {
     return { pass: false, reason: `Opted into insurance billing but missing: ${missing.join(", ") || "insurance details"}`, pathway: "hold", paRequired: null };
   }
 
-  const paRequired = PA_LIKELY_CONDITIONS.includes(patient.condition);
+  const heuristicPaRequired = PA_LIKELY_CONDITIONS.includes(patient.condition);
 
   if (!process.env.STEDI_API_KEY) {
-    // Not configured — same behavior as before this integration existed.
-    return { pass: true, reason: null, pathway: "insured", paRequired, stediChecked: false };
+    return { pass: true, reason: null, pathway: "insured", paRequired: heuristicPaRequired, stediChecked: false };
   }
 
   const stedi = await checkStediEligibility(patient);
@@ -70,13 +73,31 @@ export async function checkEligibility(patient) {
       pathway: "hold", paRequired: null, stediChecked: true, stediCheckId: stedi.checkId,
     };
   }
-  // stedi.ok === false (unreachable/error) fails open here — proceeds
-  // exactly as if Stedi weren't configured at all.
+
+  // Coverage confirmed active (or Stedi unavailable, failing open) — try
+  // the custom-LLM benefit profile on top, using only redacted data.
+  let benefitProfile = null;
+  let pathway = "insured";
+  let paRequired = heuristicPaRequired;
+  if (stedi.ok) {
+    const redacted = redactStediResponse(stedi.raw);
+    const llmResult = await buildBenefitProfile(redacted);
+    if (llmResult) {
+      benefitProfile = llmResult.benefitProfile;
+      pathway = llmResult.pathway;
+      paRequired = llmResult.benefitProfile?.priorAuthLikely ?? heuristicPaRequired;
+    }
+  }
+
   return {
-    pass: true, reason: null, pathway: "insured", paRequired,
+    pass: pathway !== "hold",
+    reason: pathway === "hold" ? "Benefit profile review recommended holding for manual coverage review" : null,
+    pathway, paRequired,
     stediChecked: stedi.ok, stediPlanDetails: stedi.planDetails || null, stediCheckId: stedi.checkId || null,
+    benefitProfile,
   };
 }
+
 
 /**
  * A03 — Appropriateness Guardrail, GOV plane, fail-closed. Runs SECOND,

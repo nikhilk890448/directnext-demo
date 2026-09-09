@@ -220,6 +220,17 @@ function JourneyDetail({ detail, onResolve, onSimulate, onRemind }) {
       <p className="small">Current stage: <strong>{STAGE_LABELS[j.current_stage] || j.current_stage}</strong>{j.current_stage === "pharmacy" && j.pharmacy_status ? ` — ${PHARMACY_STATUS_LABELS[j.pharmacy_status] || j.pharmacy_status}` : ""}</p>
       <p className="small">SLA due: <span className="mono">{j.sla_due_at ? new Date(j.sla_due_at).toLocaleString() : "—"}</span></p>
 
+{j.benefit_profile && (
+  <div className="card" style={{ marginTop: 16, background: "#f4f9ff" }}>
+    <h4 className="sectionhead" style={{ marginTop: 0 }}>Benefit profile (Cortex)</h4>
+    <p className="small">Plan: <strong>{j.benefit_profile.planName || "—"}</strong></p>
+    <p className="small">Coverage active: <strong>{j.benefit_profile.coverageActive ? "Yes" : "No"}</strong></p>
+    <p className="small">Deductible: {j.benefit_profile.deductible || "—"} · Copay: {j.benefit_profile.copay || "—"} · Coinsurance: {j.benefit_profile.coinsurance || "—"}</p>
+    <p className="small">Prior auth likely: <strong>{j.benefit_profile.priorAuthLikely ? "Yes" : "No"}</strong></p>
+    {j.benefit_profile.notes && <p className="small dim">{j.benefit_profile.notes}</p>}
+  </div>
+)}
+
       {consoleOwned && (
         <p className="small" style={{ color: "var(--cyan)" }}>Waiting on {j.current_stage === "telehealth" ? "the telehealth partner" : "the pharmacy"} — the actual decision happens in their own console. This button only sends a reminder, it can't advance the journey.</p>
       )}

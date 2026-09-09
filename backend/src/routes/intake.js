@@ -99,6 +99,7 @@ intakeRouter.post("/", async (req, res) => {
       stage_entered_at: now.toISOString(),
       sla_due_at: dueAt(now, STAGES[0].slaHours),
       pa_required: elig?.paRequired ?? null,
+      benefit_profile: elig?.benefitProfile ?? null,
     })
     .select()
     .single();
